@@ -1,0 +1,3 @@
+# Local development only. Copy to .dev.vars and replace the values.
+SUPERADMIN_EMAIL="replace-with-your-superadmin-email"
+SUPERADMIN_SETUP_SECRET="replace-with-a-long-random-setup-code"
