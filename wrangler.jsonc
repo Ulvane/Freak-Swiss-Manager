@@ -18,8 +18,9 @@
     {
       "binding": "DB",
       "database_name": "freak-swiss-db",
-      "database_id": "PASTE_YOUR_DATABASE_ID_HERE",
-      "migrations_dir": "drizzle"
+      "database_id": "6b75b4c8-a8e4-434d-ad68-a0f50e0424ee",
+      "migrations_dir": "drizzle",
+      "migrations_pattern": "drizzle/*/migration.sql"
     }
   ]
 }
