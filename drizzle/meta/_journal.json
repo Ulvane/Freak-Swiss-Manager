@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788144030201,
+      "tag": "0000_open_mole_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788145329574,
+      "tag": "0001_fearless_wiccan",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788152584947,
+      "tag": "0002_rainy_dragon_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788235152333,
+      "tag": "0003_yielding_martin_li",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788330465232,
+      "tag": "0004_bright_the_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788365366038,
+      "tag": "0005_noisy_sabra",
+      "breakpoints": true
+    }
+  ]
+}
