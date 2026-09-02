@@ -7,7 +7,7 @@ tournaments. The short name is **Freak Swiss**; the edition name is **Swiss
 Manager K Edition**.
 
 - Live application: Cloudflare deployment in progress
-- Public source: [github.com/Ulvane/Free-Swiss-Manager-K-Edition](https://github.com/Ulvane/Free-Swiss-Manager-K-Edition)
+- Public source: [github.com/Ulvane/Freak-Swiss-Manager](https://github.com/Ulvane/Freak-Swiss-Manager)
 - Project statement: [PROTEST.md](PROTEST.md)
 
 
