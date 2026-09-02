@@ -31,7 +31,6 @@ export function AuthPanel({ returnTo }: { returnTo: string }) {
         email: String(data.get("email") || ""),
         password,
         displayName: String(data.get("displayName") || ""),
-        setupCode: String(data.get("setupCode") || ""),
       }),
     });
     const result = (await response.json()) as { error?: string };
@@ -128,15 +127,6 @@ export function AuthPanel({ returnTo }: { returnTo: string }) {
                     minLength={10}
                     maxLength={128}
                     required
-                  />
-                </label>
-                <label>
-                  Superadmin setup code <span>Configured superadmin only</span>
-                  <input
-                    name="setupCode"
-                    type="password"
-                    autoComplete="off"
-                    placeholder="Leave blank for player accounts"
                   />
                 </label>
               </>

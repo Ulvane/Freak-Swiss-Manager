@@ -7,9 +7,10 @@ tournaments. The short name is **Freak Swiss**; the edition name is **Swiss
 Manager K Edition**.
 
 - Live application: Cloudflare deployment in progress
-- Public source: [github.com/Ulvane/Freak-Swiss-Manager](https://github.com/Ulvane/Freak-Swiss-Manager)
+- Public source: [github.com/Ulvane/Free-Swiss-Manager-K-Edition](https://github.com/Ulvane/Free-Swiss-Manager-K-Edition)
 - Project statement: [PROTEST.md](PROTEST.md)
 
+> **Open beta:** Test the software with non-rated events before relying on it for an official tournament.
 
 ## What it does
 
@@ -54,8 +55,7 @@ manually.
 - Broader moderator-role and public-registration testing
 - Additional pairing audit fixtures
 
-Planned features are intentionally listed here instead of being presented as
-finished functionality.
+Planned features are intentionally listed here instead of being presented as finished functionality.
 
 ## Technology
 
@@ -97,10 +97,11 @@ The production application uses a Cloudflare Worker and a D1 database bound as
 The deploy command applies every unapplied migration in `drizzle/` before
 publishing the new Worker version.
 
-Set the runtime variables `SUPERADMIN_EMAIL` and `SUPERADMIN_SETUP_SECRET`
-before creating the superadmin account. The configured email is reserved for
-that account. The setup secret is required only for its first registration and
-must never be committed.
+Register the intended account first, then set the runtime variable
+`SUPERADMIN_EMAIL` to that account's exact email address. Superadmin access is
+granted whenever the signed-in email matches this Cloudflare variable. Public
+registration does not verify email ownership, so do not assign an address that
+has not already been registered by its owner.
 
 Never commit passwords, setup secrets, moderator tokens or live account data.
 
@@ -109,11 +110,11 @@ Never commit passwords, setup secrets, moderator tokens or live account data.
 Freak Swiss Manager is for informal, unrated coffee-shop, club, friend and
 community tournaments. It is not intended for official FIDE-rated events.
 
-Pairing a small chess tournament should be free. This project protests anyone
-who charges money merely for pairing players or running basic tournament
-functions.
-
-Use it and share it without paying for basic pairing.
+Pairing a small chess tournament should be free. I protest anyone who charges
+money merely for pairing players or running basic tournament functions. I do
+not respect anyone who does that. I also protest platforms that appear
+vibe-coded or AI-written while charging people for those basic functions. Use
+it and share it without paying for basic pairing.
 
 No license has been granted yet. The source is publicly viewable, but reuse
 rights remain reserved until a license is added.

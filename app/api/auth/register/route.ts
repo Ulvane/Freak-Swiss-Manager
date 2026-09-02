@@ -1,9 +1,6 @@
 import {
-  constantTimeEqual,
   createPasswordRecord,
   createSession,
-  getSuperadminEmail,
-  getSuperadminSetupSecret,
   isValidEmail,
   normalizeEmail,
   passwordValidationError,
@@ -17,7 +14,6 @@ type RegistrationBody = {
   displayName?: string;
   email?: string;
   password?: string;
-  setupCode?: string;
 };
 
 export async function POST(request: Request) {
@@ -36,20 +32,6 @@ export async function POST(request: Request) {
     const passwordError = passwordValidationError(password);
     if (passwordError) {
       return Response.json({ error: passwordError }, { status: 400 });
-    }
-
-    const superadminEmail = getSuperadminEmail();
-    if (superadminEmail && email === superadminEmail) {
-      const configuredSecret = getSuperadminSetupSecret();
-      if (
-        !configuredSecret ||
-        !constantTimeEqual(body.setupCode?.trim() || "", configuredSecret)
-      ) {
-        return Response.json(
-          { error: "The superadmin setup code is missing or incorrect." },
-          { status: 403 },
-        );
-      }
     }
 
     const database = getDatabase();

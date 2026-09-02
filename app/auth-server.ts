@@ -37,10 +37,6 @@ export function getSuperadminEmail() {
     : null;
 }
 
-export function getSuperadminSetupSecret() {
-  return process.env.SUPERADMIN_SETUP_SECRET?.trim() || null;
-}
-
 export function isSuperadmin(email: string | null | undefined) {
   const configuredEmail = getSuperadminEmail();
   return Boolean(
