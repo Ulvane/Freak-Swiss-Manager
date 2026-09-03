@@ -135,11 +135,13 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   const [showLibrary, setShowLibrary] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
+  const [guestJoinOpen, setGuestJoinOpen] = useState(false);
   const [moderatorRedeemOpen, setModeratorRedeemOpen] = useState(false);
   const [moderatorTokenInput, setModeratorTokenInput] = useState("");
   const [moderatorInviteOpen, setModeratorInviteOpen] = useState(false);
   const [issuedModeratorToken, setIssuedModeratorToken] = useState<string | null>(null);
   const [joinTargetName, setJoinTargetName] = useState<string | null>(null);
+  const [guestJoinTargetName, setGuestJoinTargetName] = useState<string | null>(null);
   const [managePlayerId, setManagePlayerId] = useState<string | null>(null);
   const [roundView, setRoundView] = useState<{
     tournamentId: string;
@@ -153,6 +155,14 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   const [playerForm, setPlayerForm] = useState({
     name: "",
     fideId: "",
+    rating: 1500,
+  });
+  const [guestJoinForm, setGuestJoinForm] = useState({
+    tournamentCode: "",
+    name: "",
+    surname: "",
+    federation: "",
+    club: "",
     rating: 1500,
   });
   const [joinForm, setJoinForm] = useState({
@@ -230,8 +240,29 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
 
   const snapshot = payload.snapshot;
   const tournament = snapshot?.tournament;
+  const guestIdentity = useMemo(() => {
+    if (!snapshot || typeof window === "undefined") return null;
+    try {
+      const value = JSON.parse(
+        window.localStorage.getItem(`freak-swiss-guest:${snapshot.tournament.id}`) || "null",
+      ) as { playerId?: string; token?: string } | null;
+      return typeof value?.playerId === "string" && typeof value.token === "string"
+        ? { playerId: value.playerId, token: value.token }
+        : null;
+    } catch {
+      return null;
+    }
+  }, [snapshot]);
   const managedPlayer =
     snapshot?.players.find((player) => player.id === managePlayerId) ?? null;
+  const selfPlayer = snapshot?.players.find(
+    (player) => player.isYou || player.id === guestIdentity?.playerId,
+  );
+  const canWithdrawSelf = Boolean(
+    tournament &&
+      (snapshot?.viewerRole === "player" || guestIdentity) &&
+      !selfPlayer?.withdrawn,
+  );
   const currentPairings = useMemo(
     () => pairingsForRound(snapshot?.pairings ?? [], tournament?.currentRound ?? 0),
     [snapshot, tournament?.currentRound],
@@ -383,6 +414,84 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     if (joined) setJoinOpen(false);
   }
 
+  function openGuestJoinDialog(tournamentItem?: TournamentSummary) {
+    setGuestJoinTargetName(tournamentItem?.name ?? null);
+    setGuestJoinForm({
+      tournamentCode: tournamentItem?.joinCode ?? "",
+      name: "",
+      surname: "",
+      federation: "",
+      club: "",
+      rating: 1500,
+    });
+    setGuestJoinOpen(true);
+  }
+
+  async function joinAsGuest(event: FormEvent) {
+    event.preventDefault();
+    setWorking(true);
+    try {
+      const response = await fetch("/api/guest/join-tournament", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tournament_code: guestJoinForm.tournamentCode,
+          name: guestJoinForm.name,
+          surname: guestJoinForm.surname,
+          federation: guestJoinForm.federation,
+          club: guestJoinForm.club,
+          rating: guestJoinForm.rating,
+        }),
+      });
+      const data = (await response.json()) as {
+        error?: string;
+        tournamentId?: string;
+        playerId?: string;
+        guestToken?: string;
+      };
+      if (!response.ok || !data.tournamentId || !data.playerId || !data.guestToken) {
+        throw new Error(data.error || "Unable to register");
+      }
+      window.localStorage.setItem(
+        `freak-swiss-guest:${data.tournamentId}`,
+        JSON.stringify({ playerId: data.playerId, token: data.guestToken }),
+      );
+      setGuestJoinOpen(false);
+      window.history.replaceState({}, "", `?t=${data.tournamentId}`);
+      setShowLibrary(false);
+      await load(data.tournamentId);
+      toast.success("You joined the tournament");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to register");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function withdrawSelf() {
+    if (!tournament) return;
+    setWorking(true);
+    try {
+      const response = await fetch("/api/player/withdraw", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tournament_id: tournament.id,
+          confirmation: true,
+          ...(guestIdentity ? { guest_token: guestIdentity.token } : {}),
+        }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Unable to withdraw");
+      await load(tournament.id);
+      toast.success("You are withdrawn from future rounds");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to withdraw");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function redeemModeratorToken(event: FormEvent) {
     event.preventDefault();
     const redeemed = await mutate(
@@ -486,13 +595,13 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
             payload={payload}
             createOpen={createOpen}
             setCreateOpen={setCreateOpen}
-            signInPath={signInPath}
             tournamentForm={tournamentForm}
             setTournamentForm={setTournamentForm}
             createTournament={createTournament}
             working={working}
             onOpenTournament={chooseTournament}
             onJoinTournament={openJoinDialog}
+            onGuestJoinTournament={openGuestJoinDialog}
             onRedeemModerator={() => setModeratorRedeemOpen(true)}
             onDeleteModerator={(email) =>
               mutate({ action: "delete_moderator", email }, "Moderator removed")
@@ -682,6 +791,26 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                 </p>
               </section>
             ) : null}
+            {canWithdrawSelf && (
+              <section className="join-strip participant-strip">
+                <div className="join-code-block">
+                  <span>YOUR STATUS</span>
+                  <strong>Tournament active</strong>
+                </div>
+                <p>
+                  Withdraw to stay in tournament history and standings while
+                  being excluded from all future rounds.
+                </p>
+                <DangerConfirmDialog
+                  triggerLabel="Withdraw from tournament"
+                  title="Withdraw from future rounds?"
+                  description="You will remain in this tournament's history and standings. Only staff can restore your registration."
+                  working={working}
+                  onConfirm={withdrawSelf}
+                  icon="withdraw"
+                />
+              </section>
+            )}
 
             {snapshot.canEdit && (
               <section className="moderator-strip" aria-label="Tournament moderators">
@@ -1095,6 +1224,15 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
           onSubmit={joinTournament}
           working={working}
         />
+        <GuestJoinTournamentDialog
+          open={guestJoinOpen}
+          onOpenChange={setGuestJoinOpen}
+          targetName={guestJoinTargetName}
+          form={guestJoinForm}
+          setForm={setGuestJoinForm}
+          onSubmit={joinAsGuest}
+          working={working}
+        />
         <RedeemModeratorDialog
           open={moderatorRedeemOpen}
           onOpenChange={setModeratorRedeemOpen}
@@ -1409,13 +1547,13 @@ function TournamentLibrary({
   payload,
   createOpen,
   setCreateOpen,
-  signInPath,
   tournamentForm,
   setTournamentForm,
   createTournament,
   working,
   onOpenTournament,
   onJoinTournament,
+  onGuestJoinTournament,
   onRedeemModerator,
   onDeleteModerator,
   onDeleteAccount,
@@ -1428,7 +1566,6 @@ function TournamentLibrary({
   payload: ManagerPayload;
   createOpen: boolean;
   setCreateOpen: (open: boolean) => void;
-  signInPath: string;
   tournamentForm: { name: string; city: string; rounds: number };
   setTournamentForm: (
     value: { name: string; city: string; rounds: number },
@@ -1437,6 +1574,7 @@ function TournamentLibrary({
   working: boolean;
   onOpenTournament: (tournamentId: string) => void | Promise<void>;
   onJoinTournament: (tournament?: TournamentSummary) => void;
+  onGuestJoinTournament: (tournament?: TournamentSummary) => void;
   onRedeemModerator: () => void;
   onDeleteModerator: (email: string) => void | Promise<boolean>;
   onDeleteAccount: (email: string) => void | Promise<boolean>;
@@ -1482,9 +1620,9 @@ function TournamentLibrary({
                 )}
               </>
             ) : (
-              <a className="large-signin" href={signInPath} target="_top">
-                Sign in <ArrowRight />
-              </a>
+              <Button variant="outline" onClick={() => onGuestJoinTournament()}>
+                <KeyRound /> Register as guest
+              </Button>
             )}
           </div>
         </div>
@@ -1543,7 +1681,7 @@ function TournamentLibrary({
                 key={item.id}
                 item={item}
                 onOpen={onOpenTournament}
-                onJoin={payload.authenticated ? onJoinTournament : undefined}
+                onJoin={payload.authenticated ? onJoinTournament : onGuestJoinTournament}
               />
             ))}
           </div>
@@ -1829,19 +1967,19 @@ function DangerConfirmDialog({
   description: string;
   working: boolean;
   onConfirm: () => void | Promise<unknown>;
-  icon?: "trash" | "undo";
+  icon?: "trash" | "undo" | "withdraw";
 }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
         <Button variant="outline" size="sm" disabled={working}>
-          {icon === "undo" ? <Undo2 /> : <Trash2 />} {triggerLabel}
+          {icon === "undo" ? <Undo2 /> : icon === "withdraw" ? <UserMinus /> : <Trash2 />} {triggerLabel}
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent className="confirmation-dialog">
         <AlertDialogHeader>
           <p className="section-code">
-            {icon === "undo" ? "ROUND / CONTROL" : "CONFIRM / PERMANENT ACTION"}
+            {icon === "undo" ? "ROUND / CONTROL" : "CONFIRM / WITHDRAWAL"}
           </p>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
@@ -1853,7 +1991,7 @@ function DangerConfirmDialog({
             disabled={working}
             onClick={() => void onConfirm()}
           >
-            {icon === "undo" ? <Undo2 /> : <Trash2 />} Confirm
+            {icon === "undo" ? <Undo2 /> : icon === "withdraw" ? <UserMinus /> : <Trash2 />} Confirm
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -2052,6 +2190,120 @@ function JoinTournamentDialog({
           <label>
             <span>Rating</span>
             <Input
+              type="number"
+              min={0}
+              max={4000}
+              value={form.rating}
+              onChange={(event) =>
+                setForm({ ...form, rating: Number(event.target.value) })
+              }
+            />
+          </label>
+          <DialogFooter>
+            <Button type="submit" disabled={working}>
+              <UserPlus /> Join tournament
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function GuestJoinTournamentDialog({
+  open,
+  onOpenChange,
+  targetName,
+  form,
+  setForm,
+  onSubmit,
+  working,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  targetName: string | null;
+  form: {
+    tournamentCode: string;
+    name: string;
+    surname: string;
+    federation: string;
+    club: string;
+    rating: number;
+  };
+  setForm: (form: {
+    tournamentCode: string;
+    name: string;
+    surname: string;
+    federation: string;
+    club: string;
+    rating: number;
+  }) => void;
+  onSubmit: (event: FormEvent) => void;
+  working: boolean;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="create-dialog">
+        <DialogHeader>
+          <p className="section-code">GUEST / REGISTRATION</p>
+          <DialogTitle>Join without an account.</DialogTitle>
+          <DialogDescription>
+            {targetName
+              ? `Register as a guest in ${targetName}.`
+              : "Enter the tournament code shared by the organizer."}
+          </DialogDescription>
+        </DialogHeader>
+        <form className="dialog-form" onSubmit={onSubmit}>
+          <label>
+            <span>Tournament code</span>
+            <Input
+              required
+              autoFocus
+              maxLength={12}
+              className="code-input"
+              value={form.tournamentCode}
+              onChange={(event) =>
+                setForm({ ...form, tournamentCode: event.target.value.toUpperCase() })
+              }
+              placeholder="ABC123"
+            />
+          </label>
+          <label>
+            <span>Name</span>
+            <Input
+              required
+              value={form.name}
+              onChange={(event) => setForm({ ...form, name: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Surname</span>
+            <Input
+              value={form.surname}
+              onChange={(event) => setForm({ ...form, surname: event.target.value })}
+              placeholder="Optional"
+            />
+          </label>
+          <label>
+            <span>Federation</span>
+            <Input
+              value={form.federation}
+              onChange={(event) => setForm({ ...form, federation: event.target.value })}
+              placeholder="Optional"
+            />
+          </label>
+          <label>
+            <span>Club</span>
+            <Input
+              value={form.club}
+              onChange={(event) => setForm({ ...form, club: event.target.value })}
+              placeholder="Optional"
+            />
+          </label>
+          <label>
+            <span>Rating</span>
+            <Input
+              required
               type="number"
               min={0}
               max={4000}
