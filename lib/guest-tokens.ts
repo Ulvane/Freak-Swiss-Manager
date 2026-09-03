@@ -3,9 +3,24 @@ export const GUEST_TOKEN_TTL_DAYS = 30;
 const GUEST_TOKEN_TTL_MS = GUEST_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
 
 const TOKEN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+// TOKEN_ALPHABET has 32 characters, so we only accept byte values below the
+// largest multiple of 32 that fits in a byte. This avoids modulo bias instead
+// of relying on 256 happening to be evenly divisible by the alphabet length.
+const TOKEN_ALPHABET_MAX_BYTE =
+  256 - (256 % TOKEN_ALPHABET.length);
 
 export function guestTokenExpiryFrom(createdAt: Date) {
   return new Date(createdAt.getTime() + GUEST_TOKEN_TTL_MS).toISOString();
+}
+
+function randomAlphabetChar() {
+  const bytes = new Uint8Array(1);
+  let value: number;
+  do {
+    crypto.getRandomValues(bytes);
+    value = bytes[0];
+  } while (value >= TOKEN_ALPHABET_MAX_BYTE);
+  return TOKEN_ALPHABET[value % TOKEN_ALPHABET.length];
 }
 
 /**
@@ -14,10 +29,7 @@ export function guestTokenExpiryFrom(createdAt: Date) {
  * cannot be recovered later.
  */
 export function createGuestTokenValue() {
-  const bytes = crypto.getRandomValues(new Uint8Array(20));
-  const body = [...bytes]
-    .map((byte) => TOKEN_ALPHABET[byte % TOKEN_ALPHABET.length])
-    .join("");
+  const body = Array.from({ length: 20 }, () => randomAlphabetChar()).join("");
   return `GST-${body.slice(0, 5)}-${body.slice(5, 10)}-${body.slice(10, 15)}-${body.slice(15, 20)}`;
 }
 
