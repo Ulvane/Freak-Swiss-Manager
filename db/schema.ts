@@ -31,6 +31,9 @@ export const players = sqliteTable(
       .notNull()
       .references(() => tournaments.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    surname: text("surname").notNull().default(""),
+    federation: text("federation").notNull().default(""),
+    club: text("club").notNull().default(""),
     fideId: text("fide_id").notNull().default(""),
     accountEmail: text("account_email"),
     rating: integer("rating").notNull().default(0),
@@ -49,6 +52,29 @@ export const players = sqliteTable(
       table.accountEmail,
     ),
     uniqueIndex("players_seed_unique").on(table.tournamentId, table.seed),
+  ],
+);
+
+export const guestTokens = sqliteTable(
+  "guest_tokens",
+  {
+    id: text("id").primaryKey(),
+    playerId: text("player_id")
+      .notNull()
+      .references(() => players.id, { onDelete: "cascade" }),
+    tournamentId: text("tournament_id")
+      .notNull()
+      .references(() => tournaments.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    tokenHint: text("token_hint").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("guest_tokens_hash_unique").on(table.tokenHash),
+    uniqueIndex("guest_tokens_player_unique").on(table.playerId),
+    index("guest_tokens_tournament_idx").on(table.tournamentId),
+    index("guest_tokens_expiry_idx").on(table.expiresAt),
   ],
 );
 

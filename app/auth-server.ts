@@ -125,6 +125,12 @@ export async function deleteSession(rawToken: string | null) {
 export async function getAuthenticatedUser(): Promise<AppUser | null> {
   const store = await cookies();
   const rawToken = store.get(SESSION_COOKIE)?.value;
+  return getAuthenticatedUserFromToken(rawToken ?? null);
+}
+
+export async function getAuthenticatedUserFromToken(
+  rawToken: string | null,
+): Promise<AppUser | null> {
   if (!rawToken) return null;
 
   const user = await getDatabase()
