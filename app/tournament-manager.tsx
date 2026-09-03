@@ -522,14 +522,22 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
             <section className="control-heading">
               <div>
                 <p className="section-code">TOURNAMENT / CONTROL DESK</p>
-                <span className={`role-badge role-${snapshot.viewerRole}`}>
+                <span
+                  className={`role-badge role-${
+                    snapshot.viewerRole === "tournament_owner"
+                      ? "moderator"
+                      : snapshot.viewerRole
+                  }`}
+                >
                   {snapshot.viewerRole === "superadmin"
                     ? "SUPERADMIN"
-                    : snapshot.viewerRole === "moderator"
-                      ? "MODERATOR"
-                    : snapshot.viewerRole === "player"
-                      ? "PLAYER"
-                      : "VIEWER"}
+                    : snapshot.viewerRole === "tournament_owner"
+                      ? "ORGANIZER"
+                      : snapshot.viewerRole === "moderator"
+                        ? "MODERATOR"
+                        : snapshot.viewerRole === "player"
+                          ? "PLAYER"
+                          : "VIEWER"}
                 </span>
                 <h1>{tournament?.name}</h1>
                 <p className="tournament-location">
@@ -595,9 +603,24 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                 {!payload.authenticated &&
                   tournament?.registrationOpen &&
                   tournament.currentRound === 0 && (
-                    <a className="signin-link join-signin" href={signInPath} target="_top">
-                      Sign in to join <ArrowRight />
-                    </a>
+                    <>
+                      {snapshot.canJoin && (
+                        <Button
+                          onClick={() =>
+                            openJoinDialog({
+                              ...tournament!,
+                              playerCount: snapshot.players.length,
+                              role: "visitor",
+                            })
+                          }
+                        >
+                          <UserPlus /> Join
+                        </Button>
+                      )}
+                      <a className="signin-link join-signin" href={signInPath} target="_top">
+                        Sign in <ArrowRight />
+                      </a>
+                    </>
                   )}
                 {payload.canCreateTournament && (
                   <CreateTournamentDialog
@@ -680,6 +703,65 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                   You are registered. Pairings, results and standings will stay
                   synced to this Freak Swiss account.
                 </p>
+                <div className="join-strip-actions">
+                  {snapshot.canWithdraw &&
+                    tournament &&
+                    tournament.currentRound < tournament.rounds &&
+                    (snapshot.players.find((player) => player.isYou)?.nextRoundStatus ===
+                    "skip" ? (
+                      <Button
+                        variant="outline"
+                        disabled={working}
+                        onClick={() =>
+                          mutate(
+                            {
+                              action: "withdraw_player",
+                              tournamentId: tournament.id,
+                              status: "active",
+                            },
+                            "You will be paired normally next round",
+                          )
+                        }
+                      >
+                        <UserCheck /> Cancel round skip
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        disabled={working}
+                        onClick={() =>
+                          mutate(
+                            {
+                              action: "withdraw_player",
+                              tournamentId: tournament.id,
+                              status: "skip",
+                            },
+                            `You will skip round ${tournament.currentRound + 1}`,
+                          )
+                        }
+                      >
+                        <UserMinus /> Skip next round
+                      </Button>
+                    ))}
+                  {snapshot.canWithdraw && tournament && (
+                    <DangerConfirmDialog
+                      triggerLabel="Withdraw"
+                      title="Withdraw from this tournament?"
+                      description="You stay in the standings and all past results are preserved, but you will not be paired in future rounds. Only the organizer can add you back."
+                      working={working}
+                      onConfirm={() =>
+                        mutate(
+                          {
+                            action: "withdraw_player",
+                            tournamentId: tournament.id,
+                            status: "withdraw",
+                          },
+                          "You withdrew from the tournament",
+                        )
+                      }
+                    />
+                  )}
+                </div>
               </section>
             ) : null}
 
@@ -1094,6 +1176,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
           setForm={setJoinForm}
           onSubmit={joinTournament}
           working={working}
+          authenticated={payload.authenticated}
         />
         <RedeemModeratorDialog
           open={moderatorRedeemOpen}
@@ -1482,9 +1565,14 @@ function TournamentLibrary({
                 )}
               </>
             ) : (
-              <a className="large-signin" href={signInPath} target="_top">
-                Sign in <ArrowRight />
-              </a>
+              <>
+                <Button variant="outline" onClick={() => onJoinTournament()}>
+                  <KeyRound /> Join with code
+                </Button>
+                <a className="large-signin" href={signInPath} target="_top">
+                  Sign in <ArrowRight />
+                </a>
+              </>
             )}
           </div>
         </div>
@@ -1543,7 +1631,7 @@ function TournamentLibrary({
                 key={item.id}
                 item={item}
                 onOpen={onOpenTournament}
-                onJoin={payload.authenticated ? onJoinTournament : undefined}
+                onJoin={onJoinTournament}
               />
             ))}
           </div>
@@ -1578,16 +1666,24 @@ function TournamentCard({
   const roleLabel =
     item.role === "superadmin"
       ? "SUPERADMIN"
-      : item.role === "moderator"
-        ? "MODERATOR"
-        : item.role === "player"
-          ? "PLAYER"
-          : "OPEN";
+      : item.role === "tournament_owner"
+        ? "ORGANIZER"
+        : item.role === "moderator"
+          ? "MODERATOR"
+          : item.role === "player"
+            ? "PLAYER"
+            : "OPEN";
 
   return (
     <article className="tournament-card">
       <div className="tournament-card-topline">
-        <span className={`role-badge role-${item.role}`}>{roleLabel}</span>
+        <span
+          className={`role-badge role-${
+            item.role === "tournament_owner" ? "moderator" : item.role
+          }`}
+        >
+          {roleLabel}
+        </span>
         <span>{statusLabel(item.status)}</span>
       </div>
       <h2>{item.name}</h2>
@@ -1595,9 +1691,10 @@ function TournamentCard({
       <div className="card-meta">
         <span>{item.playerCount} players</span>
         <span>Round {item.currentRound}/{item.rounds}</span>
-        {(item.role === "superadmin" || item.role === "moderator") && item.joinCode && (
-          <span>Code {item.joinCode}</span>
-        )}
+        {(item.role === "superadmin" ||
+          item.role === "tournament_owner" ||
+          item.role === "moderator") &&
+          item.joinCode && <span>Code {item.joinCode}</span>}
       </div>
       <div className="card-actions">
         <Button variant="outline" onClick={() => void onOpen(item.id)}>
@@ -1981,6 +2078,7 @@ function JoinTournamentDialog({
   setForm,
   onSubmit,
   working,
+  authenticated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -2001,6 +2099,7 @@ function JoinTournamentDialog({
   }) => void;
   onSubmit: (event: FormEvent) => void;
   working: boolean;
+  authenticated: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2010,12 +2109,12 @@ function JoinTournamentDialog({
           <DialogTitle>Join the field.</DialogTitle>
           <DialogDescription>
             {targetName
-              ? `Register as a player in ${targetName}.`
-              : "Enter the six-character code shared by the tournament admin."}
+              ? `Register as a player in ${targetName}. No account needed — enter the join code to confirm.`
+              : "Enter the six-character code shared by the tournament admin. No account needed."}
           </DialogDescription>
         </DialogHeader>
         <form className="dialog-form" onSubmit={onSubmit}>
-          {!form.tournamentId && (
+          {(!form.tournamentId || !authenticated) && (
             <label>
               <span>Join code</span>
               <Input
