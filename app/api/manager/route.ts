@@ -16,6 +16,12 @@ import {
   TEST_TOURNAMENT_SOURCE,
 } from "@/lib/test-tournament";
 import { isEnterableResult } from "@/lib/result-workflow";
+import {
+  canSetOfficialVisibility,
+  isValidVisibility,
+  resolveFeaturedFlag,
+  resolveRequestedVisibility,
+} from "@/lib/tournament-visibility";
 import type {
   AccountSummary,
   ManagerPayload,
@@ -43,6 +49,8 @@ type RawTournament = {
   registrationOpen: number | boolean;
   currentRound: number;
   status: string;
+  visibility: string;
+  featured: number | boolean;
   createdAt: string;
 };
 
@@ -64,13 +72,15 @@ type RawPlayer = Omit<
 const TOURNAMENT_SELECT = `
   id, owner_email AS ownerEmail, name, city, rounds,
   join_code AS joinCode, registration_open AS registrationOpen,
-  current_round AS currentRound, status, created_at AS createdAt
+  current_round AS currentRound, status, visibility, featured,
+  created_at AS createdAt
 `;
 
 const TOURNAMENT_SELECT_FROM_T = `
   t.id, t.owner_email AS ownerEmail, t.name, t.city, t.rounds,
   t.join_code AS joinCode, t.registration_open AS registrationOpen,
-  t.current_round AS currentRound, t.status, t.created_at AS createdAt
+  t.current_round AS currentRound, t.status, t.visibility, t.featured,
+  t.created_at AS createdAt
 `;
 
 function publicTournament(row: RawTournament): Tournament {
@@ -83,6 +93,8 @@ function publicTournament(row: RawTournament): Tournament {
     registrationOpen: Boolean(row.registrationOpen),
     currentRound: Number(row.currentRound),
     status: row.status,
+    visibility: isValidVisibility(row.visibility) ? row.visibility : "community",
+    featured: Boolean(row.featured),
     createdAt: row.createdAt,
   };
 }
@@ -308,6 +320,7 @@ async function loadSnapshot(
     : isPlayer
       ? "player"
       : "visitor";
+  const viewerGlobalRole = await getGlobalRole(viewerEmail);
 
   return {
     tournament: { ...publicTournament(tournament), joinCode: canEdit ? tournament.joinCode : null },
@@ -323,6 +336,7 @@ async function loadSnapshot(
     canJoin: Boolean(
       viewerEmail && !canEdit && !isPlayer && tournament.registrationOpen && Number(tournament.currentRound) === 0,
     ),
+    canSetOfficialVisibility: canEdit && canSetOfficialVisibility(viewerGlobalRole),
     viewerRole,
     moderators: tournamentModerators,
   };
@@ -428,18 +442,40 @@ async function loadManagerPayload(tournamentId?: string | null) {
 
   const selectedId = tournamentId || null;
   let openTournaments: TournamentSummary[] = [];
+  let communityTournaments: TournamentSummary[] = [];
   if (!selectedId) {
-    const openRows = await database
-      .prepare(
-        `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(p.id) AS playerCount
-         FROM tournaments t
-         LEFT JOIN players p ON p.tournament_id = t.id
-         WHERE t.registration_open = 1 AND t.current_round = 0
-         GROUP BY t.id ORDER BY t.created_at DESC LIMIT 12`,
-      )
-      .all<RawTournamentSummary>();
+    const [officialRows, communityRows] = await Promise.all([
+      database
+        .prepare(
+          `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(p.id) AS playerCount
+           FROM tournaments t
+           LEFT JOIN players p ON p.tournament_id = t.id
+           WHERE t.registration_open = 1 AND t.current_round = 0
+             AND (t.visibility = 'official' OR t.featured = 1)
+           GROUP BY t.id ORDER BY t.created_at DESC LIMIT 12`,
+        )
+        .all<RawTournamentSummary>(),
+      database
+        .prepare(
+          `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(p.id) AS playerCount
+           FROM tournaments t
+           LEFT JOIN players p ON p.tournament_id = t.id
+           WHERE t.registration_open = 1 AND t.current_round = 0
+             AND t.visibility = 'community'
+           GROUP BY t.id ORDER BY t.created_at DESC LIMIT 24`,
+        )
+        .all<RawTournamentSummary>(),
+    ]);
     const personalIds = new Set(tournaments.map((item) => item.id));
-    openTournaments = ((openRows.results ?? []) as RawTournamentSummary[])
+    openTournaments = ((officialRows.results ?? []) as RawTournamentSummary[])
+      .filter((row) => !personalIds.has(row.id))
+      .map((row) => ({
+        ...publicTournament(row),
+        joinCode: null,
+        playerCount: Number(row.playerCount),
+        role: "visitor" as const,
+      }));
+    communityTournaments = ((communityRows.results ?? []) as RawTournamentSummary[])
       .filter((row) => !personalIds.has(row.id))
       .map((row) => ({
         ...publicTournament(row),
@@ -459,9 +495,11 @@ async function loadManagerPayload(tournamentId?: string | null) {
     viewerName: user?.displayName ?? null,
     viewerEmail,
     viewerGlobalRole,
-    canCreateTournament: viewerGlobalRole === "superadmin",
+    canCreateTournament: viewerGlobalRole !== "visitor",
+    canCreateOfficialTournament: canSetOfficialVisibility(viewerGlobalRole),
     tournaments,
     openTournaments,
+    communityTournaments,
     snapshot,
     accounts: directory.accounts,
     moderators: directory.moderators,
@@ -483,7 +521,20 @@ export async function GET(request: Request) {
 }
 
 type ManagerAction =
-  | { action: "create_tournament"; name?: string; city?: string; rounds?: number }
+  | {
+      action: "create_tournament";
+      name?: string;
+      city?: string;
+      rounds?: number;
+      visibility?: string;
+      featured?: boolean;
+    }
+  | {
+      action: "set_tournament_visibility";
+      tournamentId?: string;
+      visibility?: string;
+      featured?: boolean;
+    }
   | { action: "create_test_tournament" }
   | {
       action: "add_player";
@@ -756,18 +807,14 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "create_tournament") {
-      if (globalRole !== "superadmin") {
-        return Response.json(
-          { error: "Only the configured superadmin can create tournaments." },
-          { status: 403 },
-        );
-      }
       const name = cleanText(body.name, 100);
       const city = cleanText(body.city, 80);
       const roundsCount = Math.max(3, Math.min(15, Number(body.rounds) || 5));
       if (name.length < 3) {
         return Response.json({ error: "Tournament name is too short." }, { status: 400 });
       }
+      const visibility = resolveRequestedVisibility(body.visibility, globalRole);
+      const featured = resolveFeaturedFlag(body.featured, globalRole);
       const id = crypto.randomUUID();
       const joinCode = await uniqueJoinCode();
       const now = new Date().toISOString();
@@ -776,10 +823,10 @@ export async function POST(request: Request) {
           .prepare(
             `INSERT INTO tournaments
                (id, owner_email, name, city, rounds, join_code,
-                registration_open, current_round, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, 1, 0, 'draft', ?)`,
+                registration_open, current_round, status, visibility, featured, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 1, 0, 'draft', ?, ?, ?)`,
           )
-          .bind(id, email, name, city, roundsCount, joinCode, now),
+          .bind(id, email, name, city, roundsCount, joinCode, visibility, featured ? 1 : 0, now),
       ];
       if (!isSuperadmin(email)) {
         writes.push(
@@ -932,6 +979,28 @@ export async function POST(request: Request) {
         { error: "You can only manage tournaments assigned to you." },
         { status: 403 },
       );
+    }
+
+    if (body.action === "set_tournament_visibility") {
+      const requested = cleanText(body.visibility, 20).toLowerCase();
+      if (!isValidVisibility(requested)) {
+        return Response.json({ error: "Invalid visibility value." }, { status: 400 });
+      }
+      if (
+        (requested === "official" || body.featured === true) &&
+        !canSetOfficialVisibility(globalRole)
+      ) {
+        return Response.json(
+          { error: "Only staff can mark a tournament official or featured." },
+          { status: 403 },
+        );
+      }
+      const featured = Boolean(body.featured);
+      await database
+        .prepare(`UPDATE tournaments SET visibility = ?, featured = ? WHERE id = ?`)
+        .bind(requested, featured ? 1 : 0, tournamentId)
+        .run();
+      return Response.json({ ok: true, tournamentId, visibility: requested, featured });
     }
 
     if (body.action === "delete_tournament") {

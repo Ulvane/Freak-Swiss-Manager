@@ -8,6 +8,8 @@ export type ResultCode =
   | "0F-1F"
   | "0F-0F";
 
+export type TournamentVisibility = "official" | "community" | "private";
+
 export type Tournament = {
   id: string;
   name: string;
@@ -17,6 +19,8 @@ export type Tournament = {
   registrationOpen: boolean;
   currentRound: number;
   status: string;
+  visibility: TournamentVisibility;
+  featured: boolean;
   createdAt: string;
 };
 
@@ -101,6 +105,7 @@ export type TournamentSnapshot = {
   canRemoveModerators: boolean;
   canManageCheckIn: boolean;
   canJoin: boolean;
+  canSetOfficialVisibility: boolean;
   viewerRole: "superadmin" | "moderator" | "player" | "visitor";
   moderators: ModeratorSummary[];
 };
@@ -112,8 +117,10 @@ export type ManagerPayload = {
   viewerEmail: string | null;
   viewerGlobalRole: "superadmin" | "moderator" | "player" | "visitor";
   canCreateTournament: boolean;
+  canCreateOfficialTournament: boolean;
   tournaments: TournamentSummary[];
   openTournaments: TournamentSummary[];
+  communityTournaments: TournamentSummary[];
   snapshot: TournamentSnapshot | null;
   accounts: AccountSummary[];
   moderators: ModeratorSummary[];
