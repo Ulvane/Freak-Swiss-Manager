@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -127,6 +127,7 @@ function isNoShowResult(result: ResultCode) {
 export function TournamentManager({ signInPath, signOutPath }: Props) {
   const [payload, setPayload] = useState<ManagerPayload>(emptyPayload);
   const [loading, setLoading] = useState(true);
+  const latestLoadId = useRef(0);
   const [working, setWorking] = useState(false);
   const [savingResultIds, setSavingResultIds] = useState<Set<string>>(
     () => new Set(),
@@ -163,16 +164,20 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   });
 
   const load = useCallback(async (tournamentId?: string | null) => {
+    const loadId = latestLoadId.current + 1;
+    latestLoadId.current = loadId;
     try {
       const query = tournamentId ? `?t=${encodeURIComponent(tournamentId)}` : "";
       const response = await fetch(`/api/manager${query}`, { cache: "no-store" });
       const data = (await response.json()) as ManagerPayload & { error?: string };
       if (!response.ok) throw new Error(data.error || "Unable to load tournament");
-      setPayload(data);
+      if (latestLoadId.current === loadId) setPayload(data);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to load tournament");
+      if (latestLoadId.current === loadId) {
+        toast.error(error instanceof Error ? error.message : "Unable to load tournament");
+      }
     } finally {
-      setLoading(false);
+      if (latestLoadId.current === loadId) setLoading(false);
     }
   }, []);
 
@@ -340,7 +345,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
         tournamentId: tournament.id,
         ...playerForm,
       },
-      "Player registered",
+      "Guest player added",
     );
     if (added) setPlayerForm({ name: "", fideId: "", rating: 1500 });
   }
@@ -351,8 +356,9 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     await load(tournamentId);
   }
 
-  function openLibrary() {
+  async function openLibrary() {
     window.history.replaceState({}, "", window.location.pathname);
+    await load();
     setShowLibrary(true);
   }
 
@@ -403,7 +409,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
       }
       setIssuedModeratorToken(data.moderatorToken);
       setModeratorInviteOpen(true);
-      await load();
+      await load(tournamentId);
       toast.success("Single-use moderator token created");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to create token");
@@ -894,7 +900,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                     {snapshot.canEdit && tournament?.currentRound === 0 && (
                       <form className="player-form" onSubmit={addPlayer}>
                         <label>
-                          <span>Player name</span>
+                          <span>Guest player name</span>
                           <Input
                             required
                             value={playerForm.name}
@@ -936,7 +942,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                           />
                         </label>
                         <Button type="submit" disabled={working}>
-                          <Plus /> Register
+                          <Plus /> Add guest
                         </Button>
                       </form>
                     )}

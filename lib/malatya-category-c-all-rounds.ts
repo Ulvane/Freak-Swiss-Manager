@@ -24,7 +24,7 @@ function roundData(round: number): MalatyaCategoryCRoundData {
   return data;
 }
 
-export function createMalatyaCategoryCRoundAudit(round: number) {
+function buildMalatyaCategoryCRoundAudit(round: number) {
   const current = roundData(round);
   const history = MALATYA_C_ALL_ROUNDS
     .filter((item) => item.round < round)
@@ -125,4 +125,17 @@ export function createMalatyaCategoryCRoundAudit(round: number) {
       differentMatchups: rows.filter((row) => !row.matchup).length,
     },
   };
+}
+
+const auditCache = new Map<
+  number,
+  ReturnType<typeof buildMalatyaCategoryCRoundAudit>
+>();
+
+export function createMalatyaCategoryCRoundAudit(round: number) {
+  const cached = auditCache.get(round);
+  if (cached) return cached;
+  const audit = buildMalatyaCategoryCRoundAudit(round);
+  auditCache.set(round, audit);
+  return audit;
 }

@@ -9,7 +9,8 @@ export type AppUser = {
 
 export const SESSION_COOKIE = "freak_swiss_session";
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
-export const PASSWORD_ITERATIONS = 210_000;
+// workerd currently rejects PBKDF2 iteration counts above 100,000.
+export const PASSWORD_ITERATIONS = 100_000;
 
 type CredentialRow = {
   email: string;
@@ -77,10 +78,14 @@ export async function verifyPassword(
   password: string,
   credential: CredentialRow,
 ) {
+  const iterations = Number(credential.passwordIterations);
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > PASSWORD_ITERATIONS) {
+    return false;
+  }
   const candidate = await derivePasswordHash(
     password,
     fromBase64Url(credential.passwordSalt),
-    Number(credential.passwordIterations),
+    iterations,
   );
   return constantTimeEqual(candidate, credential.passwordHash);
 }
@@ -209,7 +214,7 @@ async function derivePasswordHash(
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      salt,
+      salt: Uint8Array.from(salt).buffer,
       iterations,
     },
     key,

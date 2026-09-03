@@ -24,25 +24,30 @@ export function AuthPanel({ returnTo }: { returnTo: string }) {
       return;
     }
 
-    const response = await fetch(`/api/auth/${mode}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        email: String(data.get("email") || ""),
-        password,
-        displayName: String(data.get("displayName") || ""),
-      }),
-    });
-    const result = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      setError(result.error || "Unable to continue.");
-      setWorking(false);
-      return;
-    }
+    try {
+      const response = await fetch(`/api/auth/${mode}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: String(data.get("email") || ""),
+          password,
+          displayName: String(data.get("displayName") || ""),
+        }),
+      });
+      const result = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setError(result.error || "Unable to continue.");
+        return;
+      }
 
-    const safeReturnTo =
-      returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/";
-    window.location.assign(safeReturnTo);
+      const safeReturnTo =
+        returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/";
+      window.location.assign(safeReturnTo);
+    } catch {
+      setError("Unable to reach the server. Check your connection and try again.");
+    } finally {
+      setWorking(false);
+    }
   }
 
   return (

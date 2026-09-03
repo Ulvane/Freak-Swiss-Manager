@@ -37,11 +37,13 @@ export const players = sqliteTable(
     seed: integer("seed").notNull(),
     withdrawn: integer("withdrawn", { mode: "boolean" }).notNull().default(false),
     checkedIn: integer("checked_in", { mode: "boolean" }).notNull().default(false),
+    guestExpiresAt: text("guest_expires_at"),
     createdAt: text("created_at").notNull(),
   },
   (table) => [
     index("players_tournament_idx").on(table.tournamentId),
     index("players_account_idx").on(table.accountEmail),
+    index("players_guest_expiry_idx").on(table.guestExpiresAt),
     uniqueIndex("players_account_tournament_unique").on(
       table.tournamentId,
       table.accountEmail,

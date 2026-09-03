@@ -17,7 +17,10 @@ type LoginBody = {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as LoginBody;
+    const body = (await request.json().catch(() => null)) as LoginBody | null;
+    if (!body) {
+      return Response.json({ error: "Invalid request." }, { status: 400 });
+    }
     const email = normalizeEmail(body.email || "");
     const password = body.password || "";
     if (!isValidEmail(email) || !password) {
@@ -76,9 +79,11 @@ export async function POST(request: Request) {
       { ok: true },
       { headers: { "set-cookie": sessionCookie(token, secure) } },
     );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to sign in";
-    return Response.json({ error: message }, { status: 500 });
+  } catch {
+    return Response.json(
+      { error: "Unable to sign in right now. Please try again." },
+      { status: 500 },
+    );
   }
 }
 

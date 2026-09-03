@@ -18,7 +18,10 @@ type RegistrationBody = {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as RegistrationBody;
+    const body = (await request.json().catch(() => null)) as RegistrationBody | null;
+    if (!body) {
+      return Response.json({ error: "Invalid request." }, { status: 400 });
+    }
     const email = normalizeEmail(body.email || "");
     const displayName = (body.displayName || "").trim().slice(0, 80);
     const password = body.password || "";
@@ -82,7 +85,18 @@ export async function POST(request: Request) {
       { headers: { "set-cookie": sessionCookie(token, secure) } },
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to create account";
-    return Response.json({ error: message }, { status: 500 });
+    if (
+      error instanceof Error &&
+      error.message.includes("UNIQUE constraint failed: auth_credentials.email")
+    ) {
+      return Response.json(
+        { error: "An account already exists for this email. Sign in instead." },
+        { status: 409 },
+      );
+    }
+    return Response.json(
+      { error: "Unable to create the account right now. Please try again." },
+      { status: 500 },
+    );
   }
 }

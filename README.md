@@ -7,7 +7,7 @@ tournaments. The short name is **Freak Swiss**; the edition name is **Swiss
 Manager K Edition**.
 
 - Live application: Cloudflare deployment in progress
-- Public source: [github.com/Ulvane/Free-Swiss-Manager-K-Edition](https://github.com/Ulvane/Free-Swiss-Manager-K-Edition)
+- Public source: [github.com/Ulvane/Freak-Swiss-Manager](https://github.com/Ulvane/Freak-Swiss-Manager)
 - Project statement: [PROTEST.md](PROTEST.md)
 
 > **Open beta:** Test the software with non-rated events before relying on it for an official tournament.
@@ -16,6 +16,8 @@ Manager K Edition**.
 
 - Creates Swiss tournaments with three to fifteen rounds.
 - Registers players by a six-character tournament code.
+- Supports temporary guest roster entries that expire after three days unless
+  Round 1 has started.
 - Requires player check-in before Round 1.
 - Generates deterministic Swiss pairings with pairing-history safeguards.
 - Records results as `1-0`, `0-1` or draw.

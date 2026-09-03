@@ -4,9 +4,11 @@ import {
   normalizeEmail,
 } from "@/app/auth-server";
 import { getDatabase } from "@/db/raw";
+import { guestExpiryFrom } from "@/lib/guest-players";
 import {
   createSwissPairings,
   hydratePairingPlayers,
+  type EnginePairing,
 } from "@/lib/pairing-engine";
 import { calculateStandings } from "@/lib/standings";
 import {
@@ -89,18 +91,40 @@ function cleanText(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
-async function ensureUserAccount(email: string, displayName: string) {
-  const now = new Date().toISOString();
-  await getDatabase()
-    .prepare(
-      `INSERT INTO user_accounts (email, display_name, created_at, last_seen_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(email) DO UPDATE SET
-         display_name = excluded.display_name,
-         last_seen_at = excluded.last_seen_at`,
-    )
-    .bind(normalizeEmail(email), displayName, now, now)
-    .run();
+function pairingInsertStatements(
+  database: D1Database,
+  tournamentId: string,
+  roundId: string,
+  roundNumber: number,
+  pairings: EnginePairing[],
+) {
+  const statements = [];
+  const rowsPerStatement = 12;
+  for (let offset = 0; offset < pairings.length; offset += rowsPerStatement) {
+    const chunk = pairings.slice(offset, offset + rowsPerStatement);
+    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const values = chunk.flatMap((pairing, index) => [
+      crypto.randomUUID(),
+      tournamentId,
+      roundId,
+      roundNumber,
+      offset + index + 1,
+      pairing.whitePlayerId,
+      pairing.blackPlayerId,
+      pairing.result,
+    ]);
+    statements.push(
+      database
+        .prepare(
+          `INSERT INTO pairings
+             (id, tournament_id, round_id, round_number, board_number,
+              white_player_id, black_player_id, result)
+           VALUES ${placeholders}`,
+        )
+        .bind(...values),
+    );
+  }
+  return statements;
 }
 
 async function getGlobalRole(email: string | null): Promise<GlobalRole> {
@@ -155,11 +179,16 @@ async function uniqueJoinCode() {
 async function ensureJoinCode(tournament: RawTournament, canControl: boolean) {
   if (tournament.joinCode || !canControl) return tournament;
   const code = await uniqueJoinCode();
-  await getDatabase()
+  const database = getDatabase();
+  await database
     .prepare(`UPDATE tournaments SET join_code = ? WHERE id = ? AND join_code IS NULL`)
     .bind(code, tournament.id)
     .run();
-  return { ...tournament, joinCode: code };
+  const persisted = await database
+    .prepare(`SELECT join_code AS joinCode FROM tournaments WHERE id = ?`)
+    .bind(tournament.id)
+    .first<{ joinCode: string | null }>();
+  return { ...tournament, joinCode: persisted?.joinCode ?? code };
 }
 
 function compactModeratorToken(value: unknown) {
@@ -357,7 +386,6 @@ async function loadManagerPayload(tournamentId?: string | null) {
   const user = await getAuthenticatedUser();
   const database = getDatabase();
   const viewerEmail = user ? normalizeEmail(user.email) : null;
-  if (user) await ensureUserAccount(viewerEmail!, user.displayName);
   const viewerGlobalRole = await getGlobalRole(viewerEmail);
   let tournaments: TournamentSummary[] = [];
 
@@ -398,27 +426,30 @@ async function loadManagerPayload(tournamentId?: string | null) {
     });
   }
 
-  const openRows = await database
-    .prepare(
-      `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(p.id) AS playerCount
-       FROM tournaments t
-       LEFT JOIN players p ON p.tournament_id = t.id
-       WHERE t.registration_open = 1 AND t.current_round = 0
-       GROUP BY t.id ORDER BY t.created_at DESC LIMIT 12`,
-    )
-    .all<RawTournamentSummary>();
-  const personalIds = new Set(tournaments.map((item) => item.id));
-  const openTournaments = ((openRows.results ?? []) as RawTournamentSummary[])
-    .filter((row) => !personalIds.has(row.id))
-    .map((row) => ({
-      ...publicTournament(row),
-      joinCode: null,
-      playerCount: Number(row.playerCount),
-      role: "visitor" as const,
-    }));
-  const selectedId = tournamentId || tournaments[0]?.id || null;
+  const selectedId = tournamentId || null;
+  let openTournaments: TournamentSummary[] = [];
+  if (!selectedId) {
+    const openRows = await database
+      .prepare(
+        `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(p.id) AS playerCount
+         FROM tournaments t
+         LEFT JOIN players p ON p.tournament_id = t.id
+         WHERE t.registration_open = 1 AND t.current_round = 0
+         GROUP BY t.id ORDER BY t.created_at DESC LIMIT 12`,
+      )
+      .all<RawTournamentSummary>();
+    const personalIds = new Set(tournaments.map((item) => item.id));
+    openTournaments = ((openRows.results ?? []) as RawTournamentSummary[])
+      .filter((row) => !personalIds.has(row.id))
+      .map((row) => ({
+        ...publicTournament(row),
+        joinCode: null,
+        playerCount: Number(row.playerCount),
+        role: "visitor" as const,
+      }));
+  }
   const snapshot = selectedId ? await loadSnapshot(selectedId, viewerEmail) : null;
-  const directory = isSuperadmin(viewerEmail)
+  const directory = isSuperadmin(viewerEmail) && !selectedId
     ? await loadAdminDirectory()
     : { accounts: [], moderators: [], moderatorTokens: [] };
 
@@ -443,9 +474,11 @@ export async function GET(request: Request) {
   try {
     const tournamentId = new URL(request.url).searchParams.get("t");
     return Response.json(await loadManagerPayload(tournamentId));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to load";
-    return Response.json({ error: message }, { status: 500 });
+  } catch {
+    return Response.json(
+      { error: "Unable to load tournament data right now." },
+      { status: 500 },
+    );
   }
 }
 
@@ -513,8 +546,10 @@ export async function POST(request: Request) {
     }
 
     const email = normalizeEmail(user.email);
-    await ensureUserAccount(email, user.displayName);
-    const body = (await request.json()) as ManagerAction;
+    const body = (await request.json().catch(() => null)) as ManagerAction | null;
+    if (!body || typeof body.action !== "string") {
+      return Response.json({ error: "Invalid request." }, { status: 400 });
+    }
     const database = getDatabase();
     const globalRole = await getGlobalRole(email);
 
@@ -544,9 +579,10 @@ export async function POST(request: Request) {
       const claim = await database
         .prepare(
           `UPDATE moderator_tokens SET used_by_email = ?, used_at = ?
-           WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL`,
+           WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL
+             AND expires_at > ?`,
         )
-        .bind(email, now, token.id)
+        .bind(email, now, token.id, now)
         .run();
       if (Number(claim.meta?.changes ?? 0) !== 1) {
         return Response.json({ error: "This token was already used." }, { status: 409 });
@@ -815,23 +851,7 @@ export async function POST(request: Request) {
              VALUES (?, ?, 1, 'active', ?)`,
           )
           .bind(roundId, id, now),
-        ...generated.map((pairing, index) =>
-          database
-            .prepare(
-              `INSERT INTO pairings
-                 (id, tournament_id, round_id, round_number, board_number,
-                  white_player_id, black_player_id, result)
-               VALUES (?, ?, ?, 1, ?, ?, ?, '*')`,
-            )
-            .bind(
-              crypto.randomUUID(),
-              id,
-              roundId,
-              index + 1,
-              pairing.whitePlayerId,
-              pairing.blackPlayerId,
-            ),
-        ),
+        ...pairingInsertStatements(database, id, roundId, 1, generated),
       ]);
       return Response.json({ ok: true, tournamentId: id }, { status: 201 });
     }
@@ -863,16 +883,14 @@ export async function POST(request: Request) {
       const name = cleanText(body.name, 100) || user.displayName;
       const fideId = cleanText(body.fideId, 24);
       const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
-      const seedRow = await database
-        .prepare(`SELECT COALESCE(MAX(seed), 0) + 1 AS nextSeed FROM players WHERE tournament_id = ?`)
-        .bind(tournament.id)
-        .first<{ nextSeed: number }>();
       await database
         .prepare(
           `INSERT INTO players
              (id, tournament_id, name, fide_id, account_email,
               rating, seed, withdrawn, checked_in, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?,
+             (SELECT COALESCE(MAX(seed), 0) + 1 FROM players WHERE tournament_id = ?),
+             0, 0, ?)`,
         )
         .bind(
           crypto.randomUUID(),
@@ -881,7 +899,7 @@ export async function POST(request: Request) {
           fideId,
           email,
           rating,
-          Number(seedRow?.nextSeed ?? 1),
+          tournament.id,
           new Date().toISOString(),
         )
         .run();
@@ -948,16 +966,15 @@ export async function POST(request: Request) {
       if (name.length < 2) {
         return Response.json({ error: "Player name is too short." }, { status: 400 });
       }
-      const seedRow = await database
-        .prepare(`SELECT COALESCE(MAX(seed), 0) + 1 AS nextSeed FROM players WHERE tournament_id = ?`)
-        .bind(tournamentId)
-        .first<{ nextSeed: number }>();
+      const createdAt = new Date();
       await database
         .prepare(
           `INSERT INTO players
              (id, tournament_id, name, fide_id, account_email,
-              rating, seed, withdrawn, checked_in, created_at)
-           VALUES (?, ?, ?, ?, NULL, ?, ?, 0, 0, ?)`,
+              rating, seed, withdrawn, checked_in, guest_expires_at, created_at)
+           VALUES (?, ?, ?, ?, NULL, ?,
+             (SELECT COALESCE(MAX(seed), 0) + 1 FROM players WHERE tournament_id = ?),
+             0, 0, ?, ?)`,
         )
         .bind(
           crypto.randomUUID(),
@@ -965,8 +982,9 @@ export async function POST(request: Request) {
           name,
           fideId,
           rating,
-          Number(seedRow?.nextSeed ?? 1),
-          new Date().toISOString(),
+          tournamentId,
+          guestExpiryFrom(createdAt),
+          createdAt.toISOString(),
         )
         .run();
       return Response.json({ ok: true, tournamentId }, { status: 201 });
@@ -1237,24 +1255,12 @@ export async function POST(request: Request) {
              VALUES (?, ?, ?, 'active', ?)`,
           )
           .bind(roundId, tournamentId, roundNumber, createdAt),
-        ...generated.map((pairing, index) =>
-          database
-            .prepare(
-              `INSERT INTO pairings
-                 (id, tournament_id, round_id, round_number, board_number,
-                  white_player_id, black_player_id, result)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            )
-            .bind(
-              crypto.randomUUID(),
-              tournamentId,
-              roundId,
-              roundNumber,
-              index + 1,
-              pairing.whitePlayerId,
-              pairing.blackPlayerId,
-              pairing.result,
-            ),
+        ...pairingInsertStatements(
+          database,
+          tournamentId,
+          roundId,
+          roundNumber,
+          generated,
         ),
         database
           .prepare(
@@ -1263,6 +1269,16 @@ export async function POST(request: Request) {
              WHERE id = ?`,
           )
           .bind(roundNumber, tournamentId),
+        ...(roundNumber === 1
+          ? [
+              database
+                .prepare(
+                  `UPDATE players SET guest_expires_at = NULL
+                   WHERE tournament_id = ? AND guest_expires_at IS NOT NULL`,
+                )
+                .bind(tournamentId),
+            ]
+          : []),
       ]);
       return Response.json({ ok: true, tournamentId, roundNumber });
     }
@@ -1298,9 +1314,6 @@ export async function POST(request: Request) {
           { status: 409 },
         );
       }
-      if (!pairing || !pairing.blackPlayerId) {
-        return Response.json({ error: "Pairing not found." }, { status: 404 });
-      }
       await database.prepare(`UPDATE pairings SET result = ? WHERE id = ?`).bind(body.result, pairingId).run();
       const unresolved = await database
         .prepare(`SELECT COUNT(*) AS count FROM pairings WHERE round_id = ? AND result = '*'`)
@@ -1326,8 +1339,10 @@ export async function POST(request: Request) {
     }
 
     return Response.json({ error: "Unsupported action." }, { status: 400 });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Request failed";
-    return Response.json({ error: message }, { status: 500 });
+  } catch {
+    return Response.json(
+      { error: "The request could not be completed right now." },
+      { status: 500 },
+    );
   }
 }
