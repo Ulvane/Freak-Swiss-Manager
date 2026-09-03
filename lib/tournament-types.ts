@@ -13,6 +13,7 @@ export type Tournament = {
   name: string;
   city: string;
   rounds: number;
+  visibility: "FEATURED" | "COMMUNITY" | "PRIVATE";
   joinCode: string | null;
   registrationOpen: boolean;
   currentRound: number;
@@ -22,7 +23,7 @@ export type Tournament = {
 
 export type TournamentSummary = Tournament & {
   playerCount: number;
-  role: "superadmin" | "moderator" | "player" | "visitor";
+  role: "superadmin" | "moderator" | "tournament_owner" | "player" | "visitor";
 };
 
 export type Player = {
@@ -101,7 +102,8 @@ export type TournamentSnapshot = {
   canRemoveModerators: boolean;
   canManageCheckIn: boolean;
   canJoin: boolean;
-  viewerRole: "superadmin" | "moderator" | "player" | "visitor";
+  canWithdraw: boolean;
+  viewerRole: "superadmin" | "moderator" | "tournament_owner" | "player" | "visitor";
   moderators: ModeratorSummary[];
 };
 
