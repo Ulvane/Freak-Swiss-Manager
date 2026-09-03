@@ -9,6 +9,7 @@ export const tournaments = sqliteTable(
     city: text("city").notNull().default(""),
     rounds: integer("rounds").notNull(),
     joinCode: text("join_code"),
+    visibility: text("visibility").notNull().default("COMMUNITY"),
     registrationOpen: integer("registration_open", { mode: "boolean" })
       .notNull()
       .default(true),
@@ -19,6 +20,7 @@ export const tournaments = sqliteTable(
   (table) => [
     index("tournaments_owner_idx").on(table.ownerEmail),
     index("tournaments_created_idx").on(table.createdAt),
+    index("tournaments_visibility_idx").on(table.visibility),
     uniqueIndex("tournaments_join_code_unique").on(table.joinCode),
   ],
 );
