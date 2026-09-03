@@ -1,5 +1,6 @@
--- Add visibility column to tournaments table
+-- Migration: Add tournament visibility field
+-- Purpose: Enable FEATURED/COMMUNITY/PRIVATE classification
+
 ALTER TABLE tournaments ADD COLUMN visibility TEXT NOT NULL DEFAULT 'COMMUNITY';
 
--- Create index for visibility filtering
-CREATE INDEX IF NOT EXISTS tournaments_visibility_idx ON tournaments(visibility);
+CREATE INDEX tournaments_visibility_idx ON tournaments(visibility);
