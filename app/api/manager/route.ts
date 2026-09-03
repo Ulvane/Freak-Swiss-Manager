@@ -1,10 +1,18 @@
 import {
+  cookieValue,
   getAuthenticatedUser,
   isSuperadmin,
   normalizeEmail,
 } from "@/app/auth-server";
 import { getDatabase } from "@/db/raw";
-import { guestExpiryFrom } from "@/lib/guest-players";
+import {
+  createGuestPlayerToken,
+  guestExpiryFrom,
+  guestPlayerCookie,
+  hashGuestPlayerToken,
+  parseGuestPlayerCookie,
+  GUEST_PLAYER_COOKIE,
+} from "@/lib/guest-players";
 import {
   createSwissPairings,
   hydratePairingPlayers,
@@ -40,6 +48,7 @@ type RawTournament = {
   city: string;
   rounds: number;
   joinCode: string | null;
+  visibility: string | null;
   registrationOpen: number | boolean;
   currentRound: number;
   status: string;
@@ -63,22 +72,31 @@ type RawPlayer = Omit<
 
 const TOURNAMENT_SELECT = `
   id, owner_email AS ownerEmail, name, city, rounds,
-  join_code AS joinCode, registration_open AS registrationOpen,
+  join_code AS joinCode,
+  COALESCE(visibility, 'COMMUNITY') AS visibility,
+  registration_open AS registrationOpen,
   current_round AS currentRound, status, created_at AS createdAt
 `;
 
 const TOURNAMENT_SELECT_FROM_T = `
   t.id, t.owner_email AS ownerEmail, t.name, t.city, t.rounds,
-  t.join_code AS joinCode, t.registration_open AS registrationOpen,
+  t.join_code AS joinCode,
+  COALESCE(t.visibility, 'COMMUNITY') AS visibility,
+  t.registration_open AS registrationOpen,
   t.current_round AS currentRound, t.status, t.created_at AS createdAt
 `;
 
 function publicTournament(row: RawTournament): Tournament {
+  const visibility =
+    row.visibility === "FEATURED" || row.visibility === "PRIVATE"
+      ? row.visibility
+      : "COMMUNITY";
   return {
     id: row.id,
     name: row.name,
     city: row.city,
     rounds: Number(row.rounds),
+    visibility,
     joinCode: row.joinCode,
     registrationOpen: Boolean(row.registrationOpen),
     currentRound: Number(row.currentRound),
@@ -139,12 +157,21 @@ async function getGlobalRole(email: string | null): Promise<GlobalRole> {
 
 async function canControlTournament(tournamentId: string, email: string) {
   if (isSuperadmin(email)) return true;
+  const normalized = normalizeEmail(email);
   const assignment = await getDatabase()
     .prepare(
-      `SELECT id FROM tournament_moderators
-       WHERE tournament_id = ? AND moderator_email = ?`,
+      `SELECT assignment.id
+       FROM (
+         SELECT id, moderator_email AS controller_email FROM tournament_moderators
+         WHERE tournament_id = ?
+         UNION ALL
+         SELECT id, owner_email AS controller_email FROM tournaments
+         WHERE id = ?
+       ) assignment
+       WHERE assignment.controller_email = ?
+       LIMIT 1`,
     )
-    .bind(tournamentId, normalizeEmail(email))
+    .bind(tournamentId, tournamentId, normalized)
     .first<{ id: string }>();
   return Boolean(assignment);
 }
@@ -238,9 +265,24 @@ async function loadTournamentModerators(tournamentId: string): Promise<Moderator
   return rows.results ?? [];
 }
 
+async function resolveGuestPlayerId(request: Request, tournamentId: string) {
+  const parsed = parseGuestPlayerCookie(cookieValue(request, GUEST_PLAYER_COOKIE));
+  if (!parsed || parsed.tournamentId !== tournamentId) return null;
+  const tokenHash = await hashGuestPlayerToken(parsed.token);
+  const row = await getDatabase()
+    .prepare(
+      `SELECT id FROM players
+       WHERE tournament_id = ? AND guest_token_hash = ? AND account_email IS NULL`,
+    )
+    .bind(tournamentId, tokenHash)
+    .first<{ id: string }>();
+  return row?.id ?? null;
+}
+
 async function loadSnapshot(
   tournamentId: string,
   viewerEmail: string | null,
+  guestPlayerId: string | null,
 ): Promise<TournamentSnapshot | null> {
   const database = getDatabase();
   const row = await database
@@ -251,6 +293,9 @@ async function loadSnapshot(
 
   const canEdit = Boolean(viewerEmail && (await canControlTournament(tournamentId, viewerEmail)));
   const tournament = await ensureJoinCode(row, canEdit);
+  const isOwner = Boolean(
+    viewerEmail && normalizeEmail(row.ownerEmail) === normalizeEmail(viewerEmail),
+  );
   const [playerRows, pairingRows, tournamentModerators] = await Promise.all([
     database
       .prepare(
@@ -295,19 +340,34 @@ async function loadSnapshot(
       player.nextRoundStatus === "skip" || player.nextRoundStatus === "bye"
         ? player.nextRoundStatus
         : "active",
-    isYou: Boolean(viewerEmail && player.accountEmail === normalizeEmail(viewerEmail)),
+    isYou: Boolean(
+      (viewerEmail && player.accountEmail === normalizeEmail(viewerEmail)) ||
+        (guestPlayerId !== null && player.id === guestPlayerId),
+    ),
   }));
   const pairings = (pairingRows.results ?? []) as Pairing[];
-  const isPlayer = rawPlayers.some(
-    (player) => Boolean(viewerEmail && player.accountEmail === normalizeEmail(viewerEmail)),
-  );
+  const viewerPlayer =
+    rawPlayers.find(
+      (player) =>
+        (viewerEmail && player.accountEmail === normalizeEmail(viewerEmail)) ||
+        (guestPlayerId !== null && player.id === guestPlayerId),
+    ) ?? null;
+  const isPlayer = Boolean(viewerPlayer);
   const viewerRole: TournamentSnapshot["viewerRole"] = canEdit
     ? isSuperadmin(viewerEmail)
       ? "superadmin"
-      : "moderator"
+      : isOwner
+        ? "tournament_owner"
+        : "moderator"
     : isPlayer
       ? "player"
       : "visitor";
+  const registrationAvailable = Boolean(
+    tournament.registrationOpen &&
+      Number(tournament.currentRound) === 0 &&
+      tournament.status !== "archived" &&
+      tournament.status !== "completed",
+  );
 
   return {
     tournament: { ...publicTournament(tournament), joinCode: canEdit ? tournament.joinCode : null },
@@ -320,8 +380,13 @@ async function loadSnapshot(
     canInviteModerators: canEdit,
     canRemoveModerators: isSuperadmin(viewerEmail),
     canManageCheckIn: canEdit && Number(tournament.currentRound) === 0,
-    canJoin: Boolean(
-      viewerEmail && !canEdit && !isPlayer && tournament.registrationOpen && Number(tournament.currentRound) === 0,
+    canJoin: Boolean(!canEdit && !isPlayer && registrationAvailable),
+    canWithdraw: Boolean(
+      !canEdit &&
+        viewerPlayer &&
+        !viewerPlayer.withdrawn &&
+        tournament.status !== "archived" &&
+        tournament.status !== "completed",
     ),
     viewerRole,
     moderators: tournamentModerators,
@@ -382,7 +447,7 @@ async function loadAdminDirectory() {
   };
 }
 
-async function loadManagerPayload(tournamentId?: string | null) {
+async function loadManagerPayload(request: Request, tournamentId?: string | null) {
   const user = await getAuthenticatedUser();
   const database = getDatabase();
   const viewerEmail = user ? normalizeEmail(user.email) : null;
@@ -403,23 +468,30 @@ async function loadManagerPayload(tournamentId?: string | null) {
       : await database
           .prepare(
             `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(DISTINCT roster.id) AS playerCount,
-                    CASE WHEN tm.id IS NOT NULL THEN 'moderator' ELSE 'player' END AS role
+                    CASE
+                      WHEN t.owner_email = ? THEN 'tournament_owner'
+                      WHEN tm.id IS NOT NULL THEN 'moderator'
+                      ELSE 'player'
+                    END AS role
              FROM tournaments t
              LEFT JOIN tournament_moderators tm
                ON tm.tournament_id = t.id AND tm.moderator_email = ?
              LEFT JOIN players member
                ON member.tournament_id = t.id AND member.account_email = ?
              LEFT JOIN players roster ON roster.tournament_id = t.id
-             WHERE tm.id IS NOT NULL OR member.id IS NOT NULL
+             WHERE t.owner_email = ? OR tm.id IS NOT NULL OR member.id IS NOT NULL
              GROUP BY t.id ORDER BY t.created_at DESC`,
           )
-          .bind(viewerEmail, viewerEmail)
+          .bind(viewerEmail, viewerEmail, viewerEmail, viewerEmail)
           .all<RawTournamentSummary>();
     tournaments = ((rows.results ?? []) as RawTournamentSummary[]).map((row) => {
       const role = row.role ?? "player";
       return {
         ...publicTournament(row),
-        joinCode: role === "superadmin" || role === "moderator" ? row.joinCode : null,
+        joinCode:
+          role === "superadmin" || role === "tournament_owner" || role === "moderator"
+            ? row.joinCode
+            : null,
         playerCount: Number(row.playerCount),
         role,
       };
@@ -448,7 +520,10 @@ async function loadManagerPayload(tournamentId?: string | null) {
         role: "visitor" as const,
       }));
   }
-  const snapshot = selectedId ? await loadSnapshot(selectedId, viewerEmail) : null;
+  const guestPlayerId = selectedId
+    ? await resolveGuestPlayerId(request, selectedId)
+    : null;
+  const snapshot = selectedId ? await loadSnapshot(selectedId, viewerEmail, guestPlayerId) : null;
   const directory = isSuperadmin(viewerEmail) && !selectedId
     ? await loadAdminDirectory()
     : { accounts: [], moderators: [], moderatorTokens: [] };
@@ -459,7 +534,7 @@ async function loadManagerPayload(tournamentId?: string | null) {
     viewerName: user?.displayName ?? null,
     viewerEmail,
     viewerGlobalRole,
-    canCreateTournament: viewerGlobalRole === "superadmin",
+    canCreateTournament: Boolean(viewerEmail),
     tournaments,
     openTournaments,
     snapshot,
@@ -473,7 +548,7 @@ async function loadManagerPayload(tournamentId?: string | null) {
 export async function GET(request: Request) {
   try {
     const tournamentId = new URL(request.url).searchParams.get("t");
-    return Response.json(await loadManagerPayload(tournamentId));
+    return Response.json(await loadManagerPayload(request, tournamentId));
   } catch {
     return Response.json(
       { error: "Unable to load tournament data right now." },
@@ -521,6 +596,11 @@ type ManagerAction =
       playerId?: string;
       status?: "active" | "skip" | "bye";
     }
+  | {
+      action: "withdraw_player";
+      tournamentId?: string;
+      status?: "withdraw" | "skip" | "active";
+    }
   | { action: "toggle_registration"; tournamentId?: string; open?: boolean }
   | { action: "generate_round"; tournamentId?: string }
   | { action: "delete_round"; tournamentId?: string }
@@ -541,15 +621,20 @@ type ManagerAction =
 export async function POST(request: Request) {
   try {
     const user = await getAuthenticatedUser();
-    if (!user) {
-      return Response.json({ error: "Sign in to continue." }, { status: 401 });
-    }
-
-    const email = normalizeEmail(user.email);
     const body = (await request.json().catch(() => null)) as ManagerAction | null;
     if (!body || typeof body.action !== "string") {
       return Response.json({ error: "Invalid request." }, { status: 400 });
     }
+
+    const email = user ? normalizeEmail(user.email) : null;
+    const guestActions: ReadonlySet<string> = new Set(["join_tournament"]);
+    if (!email && !guestActions.has(body.action)) {
+      return Response.json({ error: "Sign in to continue." }, { status: 401 });
+    }
+    // Non-null alias for the branches that already enforced authentication.
+    // TypeScript cannot narrow `email` across awaited calls, so those
+    // branches use this binding instead of repeating the same guard.
+    const authedEmail = email ?? "";
     const database = getDatabase();
     const globalRole = await getGlobalRole(email);
 
@@ -582,7 +667,7 @@ export async function POST(request: Request) {
            WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL
              AND expires_at > ?`,
         )
-        .bind(email, now, token.id, now)
+        .bind(authedEmail, now, token.id, now)
         .run();
       if (Number(claim.meta?.changes ?? 0) !== 1) {
         return Response.json({ error: "This token was already used." }, { status: 409 });
@@ -595,7 +680,7 @@ export async function POST(request: Request) {
              VALUES (?, ?, ?, ?)
              ON CONFLICT(email) DO UPDATE SET display_name = excluded.display_name`,
           )
-          .bind(email, user.displayName, email, now),
+          .bind(authedEmail, user?.displayName ?? authedEmail, authedEmail, now),
       ];
       if (token.tournamentId) {
         writes.push(
@@ -605,7 +690,7 @@ export async function POST(request: Request) {
                  (id, tournament_id, moderator_email, assigned_by_email, created_at)
                VALUES (?, ?, ?, ?, ?)`,
             )
-            .bind(crypto.randomUUID(), token.tournamentId, email, email, now),
+            .bind(crypto.randomUUID(), token.tournamentId, authedEmail, authedEmail, now),
         );
       }
       await database.batch(writes);
@@ -620,7 +705,7 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-      if (!(await canControlTournament(tournamentId, email))) {
+      if (!(await canControlTournament(tournamentId, authedEmail))) {
         return Response.json(
           { error: "You can only invite moderators to a tournament you control." },
           { status: 403 },
@@ -642,7 +727,7 @@ export async function POST(request: Request) {
           token.hash,
           `MOD-••••-••••-${token.value.slice(-4)}`,
           tournamentId,
-          email,
+          authedEmail,
           expiresAt.toISOString(),
           now.toISOString(),
         )
@@ -656,7 +741,7 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "revoke_moderator_token") {
-      if (!isSuperadmin(email)) {
+      if (!isSuperadmin(authedEmail)) {
         return Response.json({ error: "Superadmin access required." }, { status: 403 });
       }
       const tokenId = cleanText(body.tokenId, 80);
@@ -670,7 +755,7 @@ export async function POST(request: Request) {
            SET revoked_at = ?, revoked_by_email = ?
            WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL`,
         )
-        .bind(revokedAt, email, tokenId)
+        .bind(revokedAt, authedEmail, tokenId)
         .run();
       if (Number(result.meta?.changes ?? 0) !== 1) {
         return Response.json(
@@ -682,7 +767,7 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "delete_moderator_token") {
-      if (!isSuperadmin(email)) {
+      if (!isSuperadmin(authedEmail)) {
         return Response.json({ error: "Superadmin access required." }, { status: 403 });
       }
       const tokenId = cleanText(body.tokenId, 80);
@@ -700,7 +785,7 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "delete_moderator") {
-      if (!isSuperadmin(email)) {
+      if (!isSuperadmin(authedEmail)) {
         return Response.json({ error: "Superadmin access required." }, { status: 403 });
       }
       const target = normalizeEmail(cleanText(body.email, 254));
@@ -712,13 +797,13 @@ export async function POST(request: Request) {
         database
           .prepare(`DELETE FROM moderator_tokens WHERE created_by_email = ? OR used_by_email = ?`)
           .bind(target, target),
-        database.prepare(`DELETE FROM moderators WHERE email = ?`).bind(target),
+        database.prepare(`DELETE FROM moderators WHERE authedEmail = ?`).bind(target),
       ]);
       return Response.json({ ok: true });
     }
 
     if (body.action === "delete_account") {
-      if (!isSuperadmin(email)) {
+      if (!isSuperadmin(authedEmail)) {
         return Response.json({ error: "Superadmin access required." }, { status: 403 });
       }
       const target = normalizeEmail(cleanText(body.email, 254));
@@ -731,16 +816,16 @@ export async function POST(request: Request) {
         database
           .prepare(`DELETE FROM moderator_tokens WHERE created_by_email = ? OR used_by_email = ?`)
           .bind(target, target),
-        database.prepare(`DELETE FROM moderators WHERE email = ?`).bind(target),
-        database.prepare(`DELETE FROM auth_sessions WHERE email = ?`).bind(target),
-        database.prepare(`DELETE FROM auth_credentials WHERE email = ?`).bind(target),
-        database.prepare(`DELETE FROM user_accounts WHERE email = ?`).bind(target),
+        database.prepare(`DELETE FROM moderators WHERE authedEmail = ?`).bind(target),
+        database.prepare(`DELETE FROM auth_sessions WHERE authedEmail = ?`).bind(target),
+        database.prepare(`DELETE FROM auth_credentials WHERE authedEmail = ?`).bind(target),
+        database.prepare(`DELETE FROM user_accounts WHERE authedEmail = ?`).bind(target),
       ]);
       return Response.json({ ok: true });
     }
 
     if (body.action === "remove_tournament_moderator") {
-      if (!isSuperadmin(email)) {
+      if (!isSuperadmin(authedEmail)) {
         return Response.json({ error: "Superadmin access required." }, { status: 403 });
       }
       const tournamentId = cleanText(body.tournamentId, 80);
@@ -756,11 +841,8 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "create_tournament") {
-      if (globalRole !== "superadmin") {
-        return Response.json(
-          { error: "Only the configured superadmin can create tournaments." },
-          { status: 403 },
-        );
+      if (!authedEmail) {
+        return Response.json({ error: "Sign in to create a tournament." }, { status: 401 });
       }
       const name = cleanText(body.name, 100);
       const city = cleanText(body.city, 80);
@@ -771,33 +853,31 @@ export async function POST(request: Request) {
       const id = crypto.randomUUID();
       const joinCode = await uniqueJoinCode();
       const now = new Date().toISOString();
-      const writes = [
+      const visibility = globalRole === "superadmin" ? "FEATURED" : "COMMUNITY";
+      await database.batch([
         database
           .prepare(
             `INSERT INTO tournaments
-               (id, owner_email, name, city, rounds, join_code,
+               (id, owner_email, name, city, rounds, join_code, visibility,
                 registration_open, current_round, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, 1, 0, 'draft', ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 'draft', ?)`,
           )
-          .bind(id, email, name, city, roundsCount, joinCode, now),
-      ];
-      if (!isSuperadmin(email)) {
-        writes.push(
-          database
-            .prepare(
-              `INSERT INTO tournament_moderators
-                 (id, tournament_id, moderator_email, assigned_by_email, created_at)
-               VALUES (?, ?, ?, ?, ?)`,
-            )
-            .bind(crypto.randomUUID(), id, email, email, now),
-        );
-      }
-      await database.batch(writes);
+          .bind(id, authedEmail, name, city, roundsCount, joinCode, visibility, now),
+        // The creator manages their own tournament without gaining any
+        // site-wide moderator privileges.
+        database
+          .prepare(
+            `INSERT INTO tournament_moderators
+               (id, tournament_id, moderator_email, assigned_by_email, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          )
+          .bind(crypto.randomUUID(), id, authedEmail, authedEmail, now),
+      ]);
       return Response.json({ ok: true, tournamentId: id }, { status: 201 });
     }
 
     if (body.action === "create_test_tournament") {
-      if (!isSuperadmin(email)) {
+      if (!isSuperadmin(authedEmail)) {
         return Response.json({ error: "Superadmin access required." }, { status: 403 });
       }
       const id = crypto.randomUUID();
@@ -821,7 +901,7 @@ export async function POST(request: Request) {
           )
           .bind(
             id,
-            email,
+            authedEmail,
             "2700chess Top 64 · Round 1 Test",
             TEST_TOURNAMENT_SOURCE,
             joinCode,
@@ -859,51 +939,133 @@ export async function POST(request: Request) {
     if (body.action === "join_tournament") {
       const code = cleanText(body.joinCode, 12).toUpperCase();
       const directId = cleanText(body.tournamentId, 80);
-      const tournament = directId
-        ? await database
-            .prepare(`SELECT ${TOURNAMENT_SELECT} FROM tournaments WHERE id = ?`)
-            .bind(directId)
-            .first<RawTournament>()
-        : await database
-            .prepare(`SELECT ${TOURNAMENT_SELECT} FROM tournaments WHERE UPPER(join_code) = ?`)
-            .bind(code)
-            .first<RawTournament>();
+      let tournament: RawTournament | null = null;
+      if (directId && code) {
+        // A tournament id is only accepted together with its join code so an
+        // unauthenticated visitor can never register by id alone.
+        tournament = await database
+          .prepare(
+            `SELECT ${TOURNAMENT_SELECT} FROM tournaments
+             WHERE id = ? AND UPPER(join_code) = ?`,
+          )
+          .bind(directId, code)
+          .first<RawTournament>();
+      } else if (code) {
+        tournament = await database
+          .prepare(`SELECT ${TOURNAMENT_SELECT} FROM tournaments WHERE UPPER(join_code) = ?`)
+          .bind(code)
+          .first<RawTournament>();
+      } else if (directId && user) {
+        // Signed-in players may join straight from an open listing.
+        tournament = await database
+          .prepare(`SELECT ${TOURNAMENT_SELECT} FROM tournaments WHERE id = ?`)
+          .bind(directId)
+          .first<RawTournament>();
+      }
       if (!tournament) {
         return Response.json({ error: "Join code not found." }, { status: 404 });
       }
-      if (!tournament.registrationOpen || Number(tournament.currentRound) > 0) {
+      if (
+        !tournament.registrationOpen ||
+        Number(tournament.currentRound) > 0 ||
+        tournament.status === "archived" ||
+        tournament.status === "completed"
+      ) {
         return Response.json({ error: "Registration is closed." }, { status: 409 });
       }
-      const existing = await database
-        .prepare(`SELECT id FROM players WHERE tournament_id = ? AND account_email = ?`)
-        .bind(tournament.id, email)
-        .first<{ id: string }>();
-      if (existing) return Response.json({ ok: true, tournamentId: tournament.id });
 
-      const name = cleanText(body.name, 100) || user.displayName;
+      if (authedEmail) {
+        const existing = await database
+          .prepare(`SELECT id FROM players WHERE tournament_id = ? AND account_email = ?`)
+          .bind(tournament.id, authedEmail)
+          .first<{ id: string }>();
+        if (existing) return Response.json({ ok: true, tournamentId: tournament.id });
+
+        const name = cleanText(body.name, 100) || user?.displayName || "";
+        if (name.length < 2) {
+          return Response.json({ error: "Player name is too short." }, { status: 400 });
+        }
+        const fideId = cleanText(body.fideId, 24);
+        const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
+        await database
+          .prepare(
+            `INSERT INTO players
+               (id, tournament_id, name, fide_id, account_email,
+                rating, seed, withdrawn, checked_in, created_at)
+             VALUES (?, ?, ?, ?, ?, ?,
+               (SELECT COALESCE(MAX(seed), 0) + 1 FROM players WHERE tournament_id = ?),
+               0, 0, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            tournament.id,
+            name,
+            fideId,
+            authedEmail,
+            rating,
+            tournament.id,
+            new Date().toISOString(),
+          )
+          .run();
+        return Response.json({ ok: true, tournamentId: tournament.id }, { status: 201 });
+      }
+
+      // Accountless guest registration. Ownership is proven later through an
+      // HttpOnly cookie whose token is only stored as a SHA-256 hash.
+      const guestCookie = parseGuestPlayerCookie(cookieValue(request, GUEST_PLAYER_COOKIE));
+      if (guestCookie) {
+        const existingGuest = await database
+          .prepare(
+            `SELECT id FROM players
+             WHERE tournament_id = ? AND guest_token_hash = ? AND account_email IS NULL`,
+          )
+          .bind(tournament.id, await hashGuestPlayerToken(guestCookie.token))
+          .first<{ id: string }>();
+        if (existingGuest) {
+          return Response.json({ ok: true, tournamentId: tournament.id });
+        }
+      }
+
+      const name = cleanText(body.name, 100);
+      if (name.length < 2) {
+        return Response.json({ error: "Player name is too short." }, { status: 400 });
+      }
       const fideId = cleanText(body.fideId, 24);
       const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
+      const createdAt = new Date();
+      const rawGuestToken = createGuestPlayerToken();
       await database
         .prepare(
           `INSERT INTO players
              (id, tournament_id, name, fide_id, account_email,
-              rating, seed, withdrawn, checked_in, created_at)
-           VALUES (?, ?, ?, ?, ?, ?,
+              rating, seed, withdrawn, checked_in, guest_expires_at,
+              guest_token_hash, created_at)
+           VALUES (?, ?, ?, ?, NULL, ?,
              (SELECT COALESCE(MAX(seed), 0) + 1 FROM players WHERE tournament_id = ?),
-             0, 0, ?)`,
+             0, 0, ?, ?, ?)`,
         )
         .bind(
           crypto.randomUUID(),
           tournament.id,
           name,
           fideId,
-          email,
           rating,
           tournament.id,
-          new Date().toISOString(),
+          guestExpiryFrom(createdAt),
+          await hashGuestPlayerToken(rawGuestToken),
+          createdAt.toISOString(),
         )
         .run();
-      return Response.json({ ok: true, tournamentId: tournament.id }, { status: 201 });
+      const secure = new URL(request.url).protocol === "https:";
+      return Response.json(
+        { ok: true, tournamentId: tournament.id },
+        {
+          status: 201,
+          headers: {
+            "Set-Cookie": guestPlayerCookie(rawGuestToken, tournament.id, secure),
+          },
+        },
+      );
     }
 
     const tournamentId = cleanText(body.tournamentId, 80);
@@ -919,14 +1081,131 @@ export async function POST(request: Request) {
       if (Number(tournament.currentRound) > 0) {
         return Response.json({ error: "You cannot leave after pairing has started." }, { status: 409 });
       }
-      await database
-        .prepare(`DELETE FROM players WHERE tournament_id = ? AND account_email = ?`)
-        .bind(tournamentId, email)
-        .run();
+      if (authedEmail) {
+        await database
+          .prepare(`DELETE FROM players WHERE tournament_id = ? AND account_email = ?`)
+          .bind(tournamentId, authedEmail)
+          .run();
+      } else {
+        const guestPlayerId = await resolveGuestPlayerId(request, tournamentId);
+        if (!guestPlayerId) {
+          return Response.json({ error: "Sign in to continue." }, { status: 401 });
+        }
+        await database
+          .prepare(`DELETE FROM players WHERE id = ? AND tournament_id = ? AND account_email IS NULL`)
+          .bind(guestPlayerId, tournamentId)
+          .run();
+      }
       return Response.json({ ok: true });
     }
 
-    const tournament = await getTournamentForControl(tournamentId, email);
+    if (body.action === "withdraw_player") {
+      // Player self-service: only the signed-in account owner or the guest
+      // holding the matching HttpOnly cookie may change their own entry.
+      const tournament = await database
+        .prepare(`SELECT ${TOURNAMENT_SELECT} FROM tournaments WHERE id = ?`)
+        .bind(tournamentId)
+        .first<RawTournament>();
+      if (!tournament) {
+        return Response.json({ error: "Tournament not found." }, { status: 404 });
+      }
+      let playerId: string | null = null;
+      if (authedEmail) {
+        const own = await database
+          .prepare(`SELECT id FROM players WHERE tournament_id = ? AND account_email = ?`)
+          .bind(tournamentId, authedEmail)
+          .first<{ id: string }>();
+        playerId = own?.id ?? null;
+      } else {
+        playerId = await resolveGuestPlayerId(request, tournamentId);
+      }
+      if (!playerId) {
+        return Response.json(
+          { error: "You can only update your own player entry." },
+          { status: 403 },
+        );
+      }
+      const player = await database
+        .prepare(
+          `SELECT id, withdrawn FROM players WHERE id = ? AND tournament_id = ?`,
+        )
+        .bind(playerId, tournamentId)
+        .first<{ id: string; withdrawn: number | boolean }>();
+      if (!player) {
+        return Response.json({ error: "Player not found." }, { status: 404 });
+      }
+
+      const status = body.status ?? "withdraw";
+      if (status === "withdraw") {
+        if (tournament.status === "archived" || tournament.status === "completed") {
+          return Response.json({ error: "This tournament is already closed." }, { status: 409 });
+        }
+        // Historical pairings, results, and standings stay untouched; the
+        // withdrawn flag only excludes the player from future pairings.
+        await database.batch([
+          database
+            .prepare(
+              `UPDATE players SET withdrawn = 1, checked_in = 0
+               WHERE id = ? AND tournament_id = ?`,
+            )
+            .bind(playerId, tournamentId),
+          database
+            .prepare(
+              `DELETE FROM player_round_statuses
+               WHERE tournament_id = ? AND player_id = ? AND round_number > ?`,
+            )
+            .bind(tournamentId, playerId, Number(tournament.currentRound)),
+        ]);
+        return Response.json({ ok: true, tournamentId });
+      }
+
+      if (status === "skip" || status === "active") {
+        if (Number(tournament.currentRound) >= Number(tournament.rounds)) {
+          return Response.json({ error: "The tournament has no remaining round." }, { status: 409 });
+        }
+        if (Boolean(player.withdrawn)) {
+          return Response.json(
+            { error: "Ask the organizer to reactivate you before choosing a round status." },
+            { status: 409 },
+          );
+        }
+        const roundNumber = Number(tournament.currentRound) + 1;
+        const removeExisting = database
+          .prepare(
+            `DELETE FROM player_round_statuses
+             WHERE tournament_id = ? AND player_id = ? AND round_number = ?`,
+          )
+          .bind(tournamentId, playerId, roundNumber);
+        if (status === "active") {
+          await removeExisting.run();
+        } else {
+          await database.batch([
+            removeExisting,
+            database
+              .prepare(
+                `INSERT INTO player_round_statuses
+                   (id, tournament_id, player_id, round_number, status, created_at)
+                 VALUES (?, ?, ?, ?, 'skip', ?)`,
+              )
+              .bind(
+                crypto.randomUUID(),
+                tournamentId,
+                playerId,
+                roundNumber,
+                new Date().toISOString(),
+              ),
+          ]);
+        }
+        return Response.json({ ok: true, tournamentId });
+      }
+
+      return Response.json({ error: "Invalid withdrawal request." }, { status: 400 });
+    }
+
+    if (!authedEmail) {
+      return Response.json({ error: "Sign in to continue." }, { status: 401 });
+    }
+    const tournament = await getTournamentForControl(tournamentId, authedEmail);
     if (!tournament) {
       return Response.json(
         { error: "You can only manage tournaments assigned to you." },
@@ -935,7 +1214,7 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "delete_tournament") {
-      if (!isSuperadmin(email)) {
+      if (!isSuperadmin(authedEmail)) {
         return Response.json(
           { error: "Only the configured superadmin can delete tournaments." },
           { status: 403 },
