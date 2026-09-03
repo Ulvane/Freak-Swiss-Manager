@@ -24,6 +24,9 @@ test("Malatya fixture covers every entrant and round-one allocation", async () =
     MALATYA_ROUND_ONE,
     MALATYA_UNPAIRED_SEEDS,
   } = await vite.ssrLoadModule("/lib/malatya-benchmark.ts");
+  const { MALATYA_ROUND_ONE_AUDIT_STATS } = await vite.ssrLoadModule(
+    "/lib/malatya-benchmark-audit-stats.ts",
+  );
 
   assert.equal(MALATYA_PLAYERS.length, 67);
   assert.deepEqual(MALATYA_UNPAIRED_SEEDS, [2, 50]);
@@ -44,6 +47,7 @@ test("Malatya fixture covers every entrant and round-one allocation", async () =
   );
 
   const audit = createMalatyaRoundOneAudit();
+  assert.deepEqual(audit.stats, MALATYA_ROUND_ONE_AUDIT_STATS);
   assert.equal(audit.activePlayerCount, 65);
   assert.equal(audit.generated.length, 33);
   assert.equal(audit.rows.length, 33);
@@ -119,7 +123,10 @@ test("all nine Category C rounds account for every paired, skipped and withdrawn
   const { MALATYA_C_ALL_ROUNDS } = await vite.ssrLoadModule(
     "/lib/malatya-category-c-all-round-data.ts",
   );
-  const { createMalatyaCategoryCRoundAudit } = await vite.ssrLoadModule(
+  const {
+    computeMalatyaCategoryCRoundAudit,
+    createMalatyaCategoryCRoundAudit,
+  } = await vite.ssrLoadModule(
     "/lib/malatya-category-c-all-rounds.ts",
   );
 
@@ -138,7 +145,9 @@ test("all nine Category C rounds account for every paired, skipped and withdrawn
       `Round ${round.round} must account for all starters`,
     );
 
-    const audit = createMalatyaCategoryCRoundAudit(round.round);
+    const audit = computeMalatyaCategoryCRoundAudit(round.round);
+    const fixtureAudit = createMalatyaCategoryCRoundAudit(round.round);
+    assert.deepEqual(fixtureAudit.generated, audit.generated);
     assert.equal(audit.rows.length, round.pairings.length);
     assert.equal(audit.generated.length, round.pairings.length);
     assert.equal(

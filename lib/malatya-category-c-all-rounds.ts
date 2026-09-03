@@ -4,6 +4,13 @@ import {
   MALATYA_C_ALL_ROUNDS,
   type MalatyaCategoryCRoundData,
 } from "@/lib/malatya-category-c-all-round-data";
+import { MALATYA_C_GENERATED_ROUNDS } from "@/lib/malatya-category-c-generated";
+
+type GeneratedPairing = {
+  board: number;
+  whiteSeed: number;
+  blackSeed: number | null;
+};
 
 function playerId(seed: number) {
   return `seed-${seed}`;
@@ -24,16 +31,11 @@ function roundData(round: number): MalatyaCategoryCRoundData {
   return data;
 }
 
-function buildMalatyaCategoryCRoundAudit(round: number) {
-  const current = roundData(round);
-  const history = MALATYA_C_ALL_ROUNDS
-    .filter((item) => item.round < round)
-    .flatMap((item) =>
-      item.pairings.map((pairing) => ({
-        ...pairing,
-        roundNumber: item.round,
-      })),
-    );
+function auditFromGenerated(
+  current: MalatyaCategoryCRoundData,
+  generated: readonly GeneratedPairing[],
+) {
+  const round = current.round;
   const activeSeeds = new Set(
     current.pairings.flatMap((pairing) =>
       pairing.blackSeed === null
@@ -44,42 +46,6 @@ function buildMalatyaCategoryCRoundAudit(round: number) {
   const officialBye = current.pairings.find(
     (pairing) => pairing.blackSeed === null,
   );
-
-  // Hydrate everybody first so an active player's history is retained even
-  // when a previous opponent later withdrew.
-  const hydrated = hydratePairingPlayers(
-    MALATYA_C_PLAYERS.map((player) => ({
-      id: playerId(player.seed),
-      name: player.name,
-      rating: player.rating,
-      seed: player.seed,
-    })),
-    history.map((pairing) => ({
-      roundNumber: pairing.roundNumber,
-      whitePlayerId: playerId(pairing.whiteSeed),
-      blackPlayerId:
-        pairing.blackSeed === null ? null : playerId(pairing.blackSeed),
-      result: pairing.result,
-    })),
-  );
-  const activePlayers = hydrated.filter(
-    (player) =>
-      activeSeeds.has(player.seed) && player.seed !== officialBye?.whiteSeed,
-  );
-
-  const generated = createSwissPairings(activePlayers, { expectedRounds: 9 }).map((pairing, index) => ({
-    board: index + 1,
-    whiteSeed: seedFromPlayerId(pairing.whitePlayerId)!,
-    blackSeed: seedFromPlayerId(pairing.blackPlayerId),
-  }));
-  if (officialBye) {
-    generated.push({
-      board: generated.length + 1,
-      whiteSeed: officialBye.whiteSeed,
-      blackSeed: null,
-    });
-  }
-
   const generatedByKey = new Map(
     generated.map((pairing) => [
       pairingKey(pairing.whiteSeed, pairing.blackSeed),
@@ -127,15 +93,82 @@ function buildMalatyaCategoryCRoundAudit(round: number) {
   };
 }
 
+export function computeMalatyaCategoryCRoundAudit(round: number) {
+  const current = roundData(round);
+  const history = MALATYA_C_ALL_ROUNDS
+    .filter((item) => item.round < round)
+    .flatMap((item) =>
+      item.pairings.map((pairing) => ({
+        ...pairing,
+        roundNumber: item.round,
+      })),
+    );
+  const activeSeeds = new Set(
+    current.pairings.flatMap((pairing) =>
+      pairing.blackSeed === null
+        ? [pairing.whiteSeed]
+        : [pairing.whiteSeed, pairing.blackSeed],
+    ),
+  );
+  const officialBye = current.pairings.find(
+    (pairing) => pairing.blackSeed === null,
+  );
+
+  // Hydrate everybody first so an active player's history is retained even
+  // when a previous opponent later withdrew.
+  const hydrated = hydratePairingPlayers(
+    MALATYA_C_PLAYERS.map((player) => ({
+      id: playerId(player.seed),
+      name: player.name,
+      rating: player.rating,
+      seed: player.seed,
+    })),
+    history.map((pairing) => ({
+      roundNumber: pairing.roundNumber,
+      whitePlayerId: playerId(pairing.whiteSeed),
+      blackPlayerId:
+        pairing.blackSeed === null ? null : playerId(pairing.blackSeed),
+      result: pairing.result,
+    })),
+  );
+  const activePlayers = hydrated.filter(
+    (player) =>
+      activeSeeds.has(player.seed) && player.seed !== officialBye?.whiteSeed,
+  );
+
+  const generated = createSwissPairings(activePlayers, { expectedRounds: 9 }).map(
+    (pairing, index) => ({
+      board: index + 1,
+      whiteSeed: seedFromPlayerId(pairing.whitePlayerId)!,
+      blackSeed: seedFromPlayerId(pairing.blackPlayerId),
+    }),
+  );
+  if (officialBye) {
+    generated.push({
+      board: generated.length + 1,
+      whiteSeed: officialBye.whiteSeed,
+      blackSeed: null,
+    });
+  }
+
+  return auditFromGenerated(current, generated);
+}
+
 const auditCache = new Map<
   number,
-  ReturnType<typeof buildMalatyaCategoryCRoundAudit>
+  ReturnType<typeof auditFromGenerated>
 >();
 
 export function createMalatyaCategoryCRoundAudit(round: number) {
   const cached = auditCache.get(round);
   if (cached) return cached;
-  const audit = buildMalatyaCategoryCRoundAudit(round);
+  const generatedRound = MALATYA_C_GENERATED_ROUNDS.find(
+    (item) => item.round === round,
+  );
+  if (!generatedRound) {
+    throw new Error(`Generated Category C round ${round} is unavailable.`);
+  }
+  const audit = auditFromGenerated(roundData(round), generatedRound.pairings);
   auditCache.set(round, audit);
   return audit;
 }

@@ -16,11 +16,11 @@ import {
 import { MALATYA_C_ALL_ROUNDS } from "@/lib/malatya-category-c-all-round-data";
 import { createMalatyaCategoryCRoundAudit } from "@/lib/malatya-category-c-all-rounds";
 import {
-  createMalatyaRoundOneAudit,
   MALATYA_EVENT,
   MALATYA_ROUND_ONE,
   MALATYA_SOURCE_URL,
 } from "@/lib/malatya-benchmark";
+import { MALATYA_ROUND_ONE_AUDIT_STATS } from "@/lib/malatya-benchmark-audit-stats";
 import type { ResultCode } from "@/lib/tournament-types";
 
 export const dynamic = "force-dynamic";
@@ -60,7 +60,6 @@ export default async function BenchmarkPage({
 }) {
   const round = selectedRound((await searchParams).round);
   const audit = createMalatyaCategoryCRoundAudit(round);
-  const categoryAAudit = createMalatyaRoundOneAudit();
   const officialCount = audit.rows.length;
   const passed = audit.stats.exactBoardAndColors === officialCount;
   const unpairedSet = new Set(audit.unpairedSeeds);
@@ -309,8 +308,8 @@ export default async function BenchmarkPage({
               <article><span>A</span><p>System</p><strong>Baku</strong></article>
               <article><span>01</span><p>Players</p><strong>{MALATYA_EVENT.playerCount}</strong></article>
               <article><span>02</span><p>Boards</p><strong>{MALATYA_ROUND_ONE.length}</strong></article>
-              <article><span>03</span><p>Same matchup</p><strong>{categoryAAudit.stats.sameMatchupAnywhere}</strong></article>
-              <article className="audit-metric-alert"><span>04</span><p>Different</p><strong>{categoryAAudit.stats.differentMatchups}</strong></article>
+              <article><span>03</span><p>Same matchup</p><strong>{MALATYA_ROUND_ONE_AUDIT_STATS.sameMatchupAnywhere}</strong></article>
+              <article className="audit-metric-alert"><span>04</span><p>Different</p><strong>{MALATYA_ROUND_ONE_AUDIT_STATS.differentMatchups}</strong></article>
             </div>
             <a className="text-link benchmark-source-link" href={MALATYA_SOURCE_URL} target="_blank" rel="noreferrer">
               Open Category A source <ArrowUpRight className="inline-icon" />
