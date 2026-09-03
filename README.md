@@ -105,6 +105,11 @@ granted whenever the signed-in email matches this Cloudflare variable. Public
 registration does not verify email ownership, so do not assign an address that
 has not already been registered by its owner.
 
+Upgrades from the earlier 210,000-iteration password build remove only those
+incompatible password records. If that affects an account, register the same
+email again to create a Cloudflare-compatible credential; its account and
+tournament data remain intact.
+
 Never commit passwords, setup secrets, moderator tokens or live account data.
 
 ## Protest
