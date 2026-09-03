@@ -380,6 +380,32 @@ a {
   background: #1e9c57;
 }
 
+.visibility-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 5px;
+}
+
+.visibility-control > span {
+  color: var(--quiet);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.visibility-select {
+  min-width: 170px;
+  min-height: 36px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 800;
+  box-shadow: none;
+}
+
 .tournament-switcher {
   width: min(320px, calc(100vw - 36px));
   min-width: 260px;
@@ -1713,6 +1739,18 @@ a {
 
 .open-section {
   background: #e8e5dc;
+}
+
+.community-section {
+  background: #f2f0e8;
+}
+
+.community-section-note {
+  margin: -10px 0 22px;
+  max-width: 620px;
+  color: var(--quiet);
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
 .library-section-title {

@@ -94,8 +94,10 @@ const emptyPayload: ManagerPayload = {
   viewerEmail: null,
   viewerGlobalRole: "visitor",
   canCreateTournament: false,
+  canCreateOfficialTournament: false,
   tournaments: [],
   openTournaments: [],
+  communityTournaments: [],
   snapshot: null,
   accounts: [],
   moderators: [],
@@ -149,6 +151,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     name: "",
     city: "",
     rounds: 5,
+    visibility: "community" as "official" | "community" | "private",
   });
   const [playerForm, setPlayerForm] = useState({
     name: "",
@@ -332,7 +335,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     );
     if (created) {
       setCreateOpen(false);
-      setTournamentForm({ name: "", city: "", rounds: 5 });
+      setTournamentForm({ name: "", city: "", rounds: 5, visibility: "community" });
     }
   }
 
@@ -607,6 +610,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                     setForm={setTournamentForm}
                     onSubmit={createTournament}
                     working={working}
+                    canCreateOfficialTournament={payload.canCreateOfficialTournament}
                   />
                 )}
               </div>
@@ -668,6 +672,33 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                       <ShieldPlus /> Add moderator
                     </Button>
                   )}
+                  <div className="visibility-control">
+                    <span>Visibility</span>
+                    <Select
+                      value={tournament?.visibility ?? "community"}
+                      onValueChange={(value) =>
+                        mutate(
+                          {
+                            action: "set_tournament_visibility",
+                            tournamentId: tournament?.id,
+                            visibility: value,
+                          },
+                          "Visibility updated",
+                        )
+                      }
+                    >
+                      <SelectTrigger className="visibility-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="community">Community</SelectItem>
+                        <SelectItem value="private">Private</SelectItem>
+                        {snapshot.canSetOfficialVisibility && (
+                          <SelectItem value="official">Official / featured</SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </section>
             ) : snapshot.viewerRole === "player" ? (
@@ -1429,9 +1460,19 @@ function TournamentLibrary({
   createOpen: boolean;
   setCreateOpen: (open: boolean) => void;
   signInPath: string;
-  tournamentForm: { name: string; city: string; rounds: number };
+  tournamentForm: {
+    name: string;
+    city: string;
+    rounds: number;
+    visibility: "official" | "community" | "private";
+  };
   setTournamentForm: (
-    value: { name: string; city: string; rounds: number },
+    value: {
+      name: string;
+      city: string;
+      rounds: number;
+      visibility: "official" | "community" | "private";
+    },
   ) => void;
   createTournament: (event: FormEvent) => void;
   working: boolean;
@@ -1470,6 +1511,7 @@ function TournamentLibrary({
                     onSubmit={createTournament}
                     working={working}
                     prominent
+                    canCreateOfficialTournament={payload.canCreateOfficialTournament}
                   />
                 )}
                 <Button variant="outline" onClick={() => onJoinTournament()}>
@@ -1532,7 +1574,7 @@ function TournamentLibrary({
       <section className="library-section open-section">
         <div className="library-section-title">
           <p className="section-code">
-            {payload.authenticated ? "02" : "01"} / OPEN REGISTRATION
+            {payload.authenticated ? "02" : "01"} / OFFICIAL &amp; FEATURED
           </p>
           <span>{payload.openTournaments.length} OPEN</span>
         </div>
@@ -1551,6 +1593,36 @@ function TournamentLibrary({
           <div className="empty-library-note">
             <strong>No public registrations are open.</strong>
             <span>You can still join a private listing with its six-character code.</span>
+          </div>
+        )}
+      </section>
+
+      <section className="library-section community-section">
+        <div className="library-section-title">
+          <p className="section-code">
+            {payload.authenticated ? "03" : "02"} / COMMUNITY TOURNAMENTS
+          </p>
+          <span>{payload.communityTournaments.length} OPEN</span>
+        </div>
+        <p className="community-section-note">
+          User-created tournaments, fully functional and separate from the
+          official/featured listing above.
+        </p>
+        {payload.communityTournaments.length ? (
+          <div className="tournament-card-grid">
+            {payload.communityTournaments.map((item) => (
+              <TournamentCard
+                key={item.id}
+                item={item}
+                onOpen={onOpenTournament}
+                onJoin={payload.authenticated ? onJoinTournament : undefined}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="empty-library-note">
+            <strong>No community tournaments are open right now.</strong>
+            <span>Create one yourself, or join a private listing with its code.</span>
           </div>
         )}
       </section>
@@ -1909,14 +1981,21 @@ function CreateTournamentDialog({
   onSubmit,
   working,
   prominent = false,
+  canCreateOfficialTournament = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  form: { name: string; city: string; rounds: number };
-  setForm: (form: { name: string; city: string; rounds: number }) => void;
+  form: { name: string; city: string; rounds: number; visibility: "official" | "community" | "private" };
+  setForm: (form: {
+    name: string;
+    city: string;
+    rounds: number;
+    visibility: "official" | "community" | "private";
+  }) => void;
   onSubmit: (event: FormEvent) => void;
   working: boolean;
   prominent?: boolean;
+  canCreateOfficialTournament?: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1961,6 +2040,29 @@ function CreateTournamentDialog({
               value={form.rounds}
               onChange={(event) => setForm({ ...form, rounds: Number(event.target.value) })}
             />
+          </label>
+          <label>
+            <span>Visibility</span>
+            <Select
+              value={form.visibility}
+              onValueChange={(value) =>
+                setForm({
+                  ...form,
+                  visibility: value as "official" | "community" | "private",
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="community">Community (public)</SelectItem>
+                <SelectItem value="private">Private (code only)</SelectItem>
+                {canCreateOfficialTournament && (
+                  <SelectItem value="official">Official / featured</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
           </label>
           <DialogFooter>
             <Button type="submit" disabled={working}>

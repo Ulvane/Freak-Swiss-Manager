@@ -14,11 +14,14 @@ export const tournaments = sqliteTable(
       .default(true),
     currentRound: integer("current_round").notNull().default(0),
     status: text("status").notNull().default("draft"),
+    visibility: text("visibility").notNull().default("community"),
+    featured: integer("featured", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull(),
   },
   (table) => [
     index("tournaments_owner_idx").on(table.ownerEmail),
     index("tournaments_created_idx").on(table.createdAt),
+    index("tournaments_visibility_idx").on(table.visibility),
     uniqueIndex("tournaments_join_code_unique").on(table.joinCode),
   ],
 );
