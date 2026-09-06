@@ -66,6 +66,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
+import { getGuestRegistration, removeGuestRegistration } from "@/lib/guest-storage";
 import {
   applyPairingResult,
   countPendingResults,
@@ -230,6 +231,11 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
 
   const snapshot = payload.snapshot;
   const tournament = snapshot?.tournament;
+  const guestEntry = useMemo(
+    () => (tournament ? getGuestRegistration(tournament.id) : null),
+    [tournament],
+  );
+
   const managedPlayer =
     snapshot?.players.find((player) => player.id === managePlayerId) ?? null;
   const currentPairings = useMemo(
@@ -381,6 +387,51 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
       "You joined the tournament",
     );
     if (joined) setJoinOpen(false);
+  }
+
+  async function withdrawSelf() {
+    if (!tournament) return;
+    setWorking(true);
+    try {
+      const response = await fetch("/api/player/withdraw", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tournamentId: tournament.id, confirm: true }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Unable to withdraw");
+      toast.success("You withdrew from this tournament");
+      await load(tournament.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to withdraw");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function withdrawGuestSelf() {
+    if (!tournament || !guestEntry) return;
+    setWorking(true);
+    try {
+      const response = await fetch("/api/player/withdraw", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tournamentId: tournament.id,
+          guestToken: guestEntry.token,
+          confirm: true,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Unable to withdraw");
+      toast.success("You withdrew from this tournament");
+      removeGuestRegistration(tournament.id);
+      await load(tournament.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to withdraw");
+    } finally {
+      setWorking(false);
+    }
   }
 
   async function redeemModeratorToken(event: FormEvent) {
@@ -680,6 +731,58 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                   You are registered. Pairings, results and standings will stay
                   synced to this Freak Swiss account.
                 </p>
+              </section>
+            ) : guestEntry ? (
+              <section className="join-strip participant-strip">
+                <div className="join-code-block">
+                  <span>YOUR ROLE</span>
+                  <strong>GUEST</strong>
+                </div>
+                <p>
+                  You joined as a guest ({guestEntry.name}). No account was
+                  created; keep your access code to manage this registration.
+                </p>
+                {(() => {
+                  const guestPlayer = snapshot.players.find(
+                    (player) => player.id === guestEntry.playerId,
+                  );
+                  if (guestPlayer?.withdrawn) {
+                    return (
+                      <span className="checkin-state">Withdrawn</span>
+                    );
+                  }
+                  return (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="outline" disabled={working}>
+                          <UserMinus /> Withdraw
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent className="confirmation-dialog">
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            Withdraw from this tournament?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Your previous games and results stay in the
+                            tournament history, but you will not be paired in
+                            future rounds. Tournament staff can restore you
+                            later if allowed.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Stay registered</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={withdrawGuestSelf}
+                            disabled={working}
+                          >
+                            Withdraw
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  );
+                })()}
               </section>
             ) : null}
 
@@ -1065,6 +1168,48 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                                     >
                                       <Trash2 />
                                     </Button>
+                                  )}
+                                </div>
+                              )}
+                              {!snapshot.canEdit && player.isYou && tournament && (
+                                <div className="player-actions">
+                                  {player.withdrawn ? (
+                                    <span className="checkin-state">Withdrawn</span>
+                                  ) : (
+                                    <AlertDialog>
+                                      <AlertDialogTrigger asChild>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          disabled={working}
+                                        >
+                                          <UserMinus /> Withdraw
+                                        </Button>
+                                      </AlertDialogTrigger>
+                                      <AlertDialogContent className="confirmation-dialog">
+                                        <AlertDialogHeader>
+                                          <AlertDialogTitle>
+                                            Withdraw from this tournament?
+                                          </AlertDialogTitle>
+                                          <AlertDialogDescription>
+                                            Your previous games and results stay
+                                            in the tournament history, but you
+                                            will not be paired in future rounds.
+                                            Tournament staff can restore you
+                                            later if allowed.
+                                          </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                          <AlertDialogCancel>Stay registered</AlertDialogCancel>
+                                          <AlertDialogAction
+                                            onClick={withdrawSelf}
+                                            disabled={working}
+                                          >
+                                            Withdraw
+                                          </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                      </AlertDialogContent>
+                                    </AlertDialog>
                                   )}
                                 </div>
                               )}
@@ -1482,9 +1627,14 @@ function TournamentLibrary({
                 )}
               </>
             ) : (
-              <a className="large-signin" href={signInPath} target="_top">
-                Sign in <ArrowRight />
-              </a>
+              <>
+                <a className="large-signin" href={signInPath} target="_top">
+                  Sign in <ArrowRight />
+                </a>
+                <a className="guest-join-link" href="/guest/join">
+                  <KeyRound /> Join a tournament as a guest
+                </a>
+              </>
             )}
           </div>
         </div>

@@ -38,6 +38,7 @@ export const players = sqliteTable(
     withdrawn: integer("withdrawn", { mode: "boolean" }).notNull().default(false),
     checkedIn: integer("checked_in", { mode: "boolean" }).notNull().default(false),
     guestExpiresAt: text("guest_expires_at"),
+    guestTokenHash: text("guest_token_hash"),
     createdAt: text("created_at").notNull(),
   },
   (table) => [
@@ -150,6 +151,29 @@ export const moderatorTokens = sqliteTable(
     index("moderator_tokens_tournament_idx").on(table.tournamentId),
     index("moderator_tokens_expiry_idx").on(table.expiresAt),
     index("moderator_tokens_created_idx").on(table.createdAt),
+  ],
+);
+
+export const guestTokens = sqliteTable(
+  "guest_tokens",
+  {
+    id: text("id").primaryKey(),
+    playerId: text("player_id")
+      .notNull()
+      .references(() => players.id, { onDelete: "cascade" }),
+    tournamentId: text("tournament_id")
+      .notNull()
+      .references(() => tournaments.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    tokenHint: text("token_hint"),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("guest_tokens_hash_unique").on(table.tokenHash),
+    index("guest_tokens_player_idx").on(table.playerId),
+    index("guest_tokens_tournament_idx").on(table.tournamentId),
+    index("guest_tokens_expiry_idx").on(table.expiresAt),
   ],
 );
 

@@ -2027,6 +2027,29 @@ a {
   color: white;
 }
 
+.guest-join-link {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 52px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--ink);
+  padding: 0 22px;
+  border-radius: 0;
+  background: var(--white);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.guest-join-link:hover {
+  background: var(--ink);
+  color: var(--white);
+}
+
+.guest-join-link svg {
+  width: 16px;
+}
+
 .library-features {
   display: flex;
   flex-wrap: wrap;
@@ -2729,6 +2752,44 @@ a {
 
 .auth-submit svg,
 .auth-security-note svg {
+  width: 17px;
+  height: 17px;
+}
+
+.guest-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.guest-actions .auth-submit {
+  text-decoration: none;
+}
+
+.auth-withdraw {
+  display: inline-flex;
+  min-height: 50px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid var(--ink);
+  background: var(--white);
+  color: var(--ink);
+  padding: 0 20px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.auth-withdraw:hover {
+  background: var(--ink);
+  color: var(--white);
+}
+
+.auth-withdraw:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.auth-withdraw svg {
   width: 17px;
   height: 17px;
 }
