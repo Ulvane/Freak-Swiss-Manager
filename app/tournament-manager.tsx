@@ -2466,10 +2466,15 @@ function CreateTournamentDialog({
                 setForm({ ...form, visibility: value as TournamentVisibility })
               }
             >
-              <SelectTrigger>
+              <SelectTrigger className="form-select-trigger">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent
+                className="form-select-content"
+                position="popper"
+                align="start"
+                sideOffset={6}
+              >
                 {canUseOfficial && <SelectItem value="official">Official / featured</SelectItem>}
                 <SelectItem value="community">Community</SelectItem>
                 <SelectItem value="private">Private / code-only</SelectItem>
@@ -2581,10 +2586,15 @@ function TournamentSettingsDialog({
                   setForm({ ...form, visibility: value as TournamentVisibility })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger className="form-select-trigger">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent
+                  className="form-select-content"
+                  position="popper"
+                  align="start"
+                  sideOffset={6}
+                >
                   {canUseOfficial && <SelectItem value="official">Official / featured</SelectItem>}
                   <SelectItem value="community">Community</SelectItem>
                   <SelectItem value="private">Private / code-only</SelectItem>

@@ -929,8 +929,8 @@ a {
   gap: 7px;
 }
 
-.player-form label span,
-.dialog-form label span {
+.player-form label > span,
+.dialog-form label > span {
   color: var(--quiet);
   font-size: 0.61rem;
   font-weight: 900;
@@ -942,6 +942,74 @@ a {
 .dialog-form input {
   border-radius: 0;
   background: var(--white);
+}
+
+.form-select-trigger {
+  width: 100%;
+  min-width: 0;
+  border-color: var(--line);
+  border-radius: 0;
+  background: var(--white);
+  color: var(--ink);
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.form-select-trigger[data-state="open"] {
+  border-color: var(--ink);
+  box-shadow: inset 4px 0 0 var(--red);
+}
+
+.form-select-trigger [data-slot="select-value"] {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form-select-content {
+  z-index: 100;
+  width: var(--radix-select-trigger-width);
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--white);
+  color: var(--ink);
+  box-shadow: 8px 8px 0 rgb(17 17 15 / 18%);
+}
+
+.form-select-content > div {
+  height: auto !important;
+}
+
+.form-select-content [data-slot="select-item"] {
+  min-height: 42px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--white);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.form-select-content [data-slot="select-item"]:last-child {
+  border-bottom: 0;
+}
+
+.form-select-content [data-slot="select-item"][data-highlighted] {
+  background: var(--ink);
+  color: var(--white);
+}
+
+.form-select-content [data-slot="select-item"][data-highlighted] svg {
+  color: var(--white);
+}
+
+.form-select-content [data-slot="select-item"][data-state="checked"] {
+  box-shadow: inset 4px 0 0 var(--red);
 }
 
 .result-choice-group {

@@ -393,3 +393,19 @@ test("authorized tournament backup is complete, deterministic, and secret-free",
   assert.match(ui, /Tournament backup downloaded/);
   assert.match(ui, /<Download \/> Backup/);
 });
+
+test("visibility menus use the native form style without nested-label overlap", async () => {
+  const [ui, styles] = await Promise.all([
+    readFile(`${root}/app/tournament-manager.tsx`, "utf8"),
+    readFile(`${root}/app/globals.css`, "utf8"),
+  ]);
+
+  assert.equal((ui.match(/className="form-select-trigger"/g) ?? []).length, 2);
+  assert.equal((ui.match(/className="form-select-content"/g) ?? []).length, 2);
+  assert.equal((ui.match(/position="popper"/g) ?? []).length, 3);
+  assert.match(styles, /\.dialog-form label > span\s*\{/);
+  assert.doesNotMatch(styles, /\.dialog-form label span\s*\{/);
+  assert.match(styles, /\.form-select-trigger\s*\{[\s\S]*?width: 100%;/);
+  assert.match(styles, /\.form-select-content\s*\{[\s\S]*?background: var\(--white\);/);
+  assert.match(styles, /\.form-select-content \[data-slot="select-item"\]\[data-highlighted\]/);
+});
