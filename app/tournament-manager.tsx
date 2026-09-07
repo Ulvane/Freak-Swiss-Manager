@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   Copy,
   Crown,
+  Download,
   FlaskConical,
   KeyRound,
   Plus,
@@ -530,6 +531,48 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     toast.success("Join code copied");
   }
 
+  async function exportTournamentBackup() {
+    if (!tournament) return;
+    setWorking(true);
+    try {
+      const response = await fetch("/api/manager", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "export_tournament",
+          tournamentId: tournament.id,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        backup?: unknown;
+      };
+      if (!response.ok || !data.backup) {
+        throw new Error(data.error || "Unable to export tournament");
+      }
+      const blob = new Blob([JSON.stringify(data.backup, null, 2)], {
+        type: "application/json",
+      });
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeName = tournament.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "tournament";
+      link.href = objectUrl;
+      link.download = `${safeName}-backup.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      toast.success("Tournament backup downloaded");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to export tournament");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="loading-screen" aria-live="polite">
@@ -677,6 +720,15 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                 <Button variant="outline" onClick={copyShareLink}>
                   <Copy /> Share
                 </Button>
+                {snapshot.canEdit && tournament && (
+                  <Button
+                    variant="outline"
+                    disabled={working}
+                    onClick={() => void exportTournamentBackup()}
+                  >
+                    <Download /> Backup
+                  </Button>
+                )}
                 {snapshot.canDeleteTournament && tournament && (
                   <DeleteTournamentDialog
                     tournament={tournament}
@@ -1195,10 +1247,16 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                   </TabsContent>
 
                   <TabsContent value="players" className="tab-panel">
-                    {snapshot.canEdit && tournament?.currentRound === 0 && (
+                    {snapshot.canEdit &&
+                      tournament &&
+                      (tournament.currentRound === 0 || tournament.status === "between_rounds") && (
                       <form className="player-form" onSubmit={addPlayer}>
                         <label>
-                          <span>Guest player name</span>
+                          <span>
+                            {tournament.currentRound > 0
+                              ? "Late entrant name"
+                              : "Guest player name"}
+                          </span>
                           <Input
                             required
                             value={playerForm.name}
@@ -1240,7 +1298,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                           />
                         </label>
                         <Button type="submit" disabled={working}>
-                          <Plus /> Add guest
+                          <Plus /> {tournament.currentRound > 0 ? "Add late entrant" : "Add guest"}
                         </Button>
                       </form>
                     )}
