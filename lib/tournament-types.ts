@@ -8,6 +8,8 @@ export type ResultCode =
   | "0F-1F"
   | "0F-0F";
 
+export type TournamentVisibility = "official" | "community" | "private";
+
 export type Tournament = {
   id: string;
   name: string;
@@ -15,6 +17,8 @@ export type Tournament = {
   rounds: number;
   joinCode: string | null;
   registrationOpen: boolean;
+  visibility: TournamentVisibility;
+  archivedAt: string | null;
   currentRound: number;
   status: string;
   createdAt: string;
@@ -22,7 +26,7 @@ export type Tournament = {
 
 export type TournamentSummary = Tournament & {
   playerCount: number;
-  role: "superadmin" | "moderator" | "player" | "visitor";
+  role: "superadmin" | "moderator" | "organizer" | "player" | "visitor";
 };
 
 export type Player = {
@@ -32,9 +36,16 @@ export type Player = {
   rating: number;
   seed: number;
   withdrawn: boolean;
+  withdrawnFromRound: number | null;
   checkedIn: boolean;
   nextRoundStatus: "active" | "skip" | "bye";
   isYou: boolean;
+};
+
+export type RoundStatusRecord = {
+  playerId: string;
+  roundNumber: number;
+  status: "skip" | "bye";
 };
 
 export type ModeratorSummary = {
@@ -93,6 +104,7 @@ export type TournamentSnapshot = {
   tournament: Tournament;
   players: Player[];
   pairings: Pairing[];
+  roundStatuses: RoundStatusRecord[];
   standings: Standing[];
   canEdit: boolean;
   canDeleteTournament: boolean;
@@ -100,8 +112,11 @@ export type TournamentSnapshot = {
   canInviteModerators: boolean;
   canRemoveModerators: boolean;
   canManageCheckIn: boolean;
+  canChangeVisibility: boolean;
+  canArchiveTournament: boolean;
+  canSelfWithdraw: boolean;
   canJoin: boolean;
-  viewerRole: "superadmin" | "moderator" | "player" | "visitor";
+  viewerRole: "superadmin" | "moderator" | "organizer" | "player" | "visitor";
   moderators: ModeratorSummary[];
 };
 
@@ -110,9 +125,11 @@ export type ManagerPayload = {
   authenticated: boolean;
   viewerName: string | null;
   viewerEmail: string | null;
-  viewerGlobalRole: "superadmin" | "moderator" | "player" | "visitor";
+  viewerGlobalRole: "superadmin" | "moderator" | "organizer" | "player" | "visitor";
   canCreateTournament: boolean;
+  canCreateOfficialTournaments: boolean;
   tournaments: TournamentSummary[];
+  communityTournaments: TournamentSummary[];
   openTournaments: TournamentSummary[];
   snapshot: TournamentSnapshot | null;
   accounts: AccountSummary[];

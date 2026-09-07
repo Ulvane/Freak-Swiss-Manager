@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Archive,
   ArrowRight,
   BookOpen,
   Check,
@@ -12,6 +13,8 @@ import {
   FlaskConical,
   KeyRound,
   Plus,
+  Pencil,
+  Printer,
   RefreshCw,
   Settings2,
   ShieldCheck,
@@ -73,6 +76,7 @@ import {
   pairingsForRound,
   type EnterableResult,
 } from "@/lib/result-workflow";
+import { createCrosstableRows } from "@/lib/crosstable";
 import type {
   ManagerPayload,
   Pairing,
@@ -81,6 +85,7 @@ import type {
   Standing,
   Tournament,
   TournamentSummary,
+  TournamentVisibility,
 } from "@/lib/tournament-types";
 
 type Props = {
@@ -95,7 +100,9 @@ const emptyPayload: ManagerPayload = {
   viewerEmail: null,
   viewerGlobalRole: "visitor",
   canCreateTournament: false,
+  canCreateOfficialTournaments: false,
   tournaments: [],
+  communityTournaments: [],
   openTournaments: [],
   snapshot: null,
   accounts: [],
@@ -150,6 +157,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     name: "",
     city: "",
     rounds: 5,
+    visibility: "community" as TournamentVisibility,
   });
   const [playerForm, setPlayerForm] = useState({
     name: "",
@@ -238,6 +246,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
 
   const managedPlayer =
     snapshot?.players.find((player) => player.id === managePlayerId) ?? null;
+  const currentPlayer = snapshot?.players.find((player) => player.isYou) ?? null;
   const currentPairings = useMemo(
     () => pairingsForRound(snapshot?.pairings ?? [], tournament?.currentRound ?? 0),
     [snapshot, tournament?.currentRound],
@@ -252,6 +261,19 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   const viewedPairings = useMemo(
     () => pairingsForRound(snapshot?.pairings ?? [], viewedRound),
     [snapshot, viewedRound],
+  );
+  const crosstableRows = useMemo(
+    () =>
+      snapshot
+        ? createCrosstableRows(
+            snapshot.players,
+            snapshot.pairings,
+            snapshot.standings,
+            snapshot.roundStatuses,
+            snapshot.tournament.currentRound,
+          )
+        : [],
+    [snapshot],
   );
   const remainingResults = countPendingResults(currentPairings);
   const activePlayerCount = snapshot?.players.filter((player) => !player.withdrawn).length ?? 0;
@@ -338,8 +360,23 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     );
     if (created) {
       setCreateOpen(false);
-      setTournamentForm({ name: "", city: "", rounds: 5 });
+      setTournamentForm({
+        name: "",
+        city: "",
+        rounds: 5,
+        visibility: payload.canCreateOfficialTournaments ? "official" : "community",
+      });
     }
+  }
+
+  function changeCreateOpen(open: boolean) {
+    if (open) {
+      setTournamentForm((current) => ({
+        ...current,
+        visibility: payload.canCreateOfficialTournaments ? "official" : "community",
+      }));
+    }
+    setCreateOpen(open);
   }
 
   async function addPlayer(event: FormEvent) {
@@ -368,6 +405,16 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     setShowLibrary(true);
   }
 
+  async function openCommunityLibrary() {
+    await openLibrary();
+    window.requestAnimationFrame(() => {
+      document.getElementById("community-tournaments")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
+
   function openJoinDialog(tournamentItem?: TournamentSummary) {
     setJoinTargetName(tournamentItem?.name ?? null);
     setJoinForm({
@@ -393,10 +440,10 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     if (!tournament) return;
     setWorking(true);
     try {
-      const response = await fetch("/api/player/withdraw", {
+      const response = await fetch("/api/manager", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tournamentId: tournament.id, confirm: true }),
+        body: JSON.stringify({ action: "self_withdraw", tournamentId: tournament.id }),
       });
       const data = (await response.json().catch(() => ({}))) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Unable to withdraw");
@@ -512,6 +559,13 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
             <a className="text-link audit-link" href="/benchmark">
               <FlaskConical /> Pairing audit
             </a>
+            <button
+              className="text-link topbar-button"
+              type="button"
+              onClick={() => void openCommunityLibrary()}
+            >
+              Community tournaments
+            </button>
             {payload.authenticated ? (
               <>
                 <span className={`role-badge role-${payload.viewerGlobalRole}`}>
@@ -536,7 +590,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
           <TournamentLibrary
             payload={payload}
             createOpen={createOpen}
-            setCreateOpen={setCreateOpen}
+            setCreateOpen={changeCreateOpen}
             signInPath={signInPath}
             tournamentForm={tournamentForm}
             setTournamentForm={setTournamentForm}
@@ -578,6 +632,8 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                     ? "SUPERADMIN"
                     : snapshot.viewerRole === "moderator"
                       ? "MODERATOR"
+                    : snapshot.viewerRole === "organizer"
+                      ? "OWNER"
                     : snapshot.viewerRole === "player"
                       ? "PLAYER"
                       : "VIEWER"}
@@ -586,7 +642,13 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                 <p className="tournament-location">
                   {tournament?.city || "Location not set"}
                   <span aria-hidden="true">↗</span>
-                  Server-persisted
+                  {tournament?.archivedAt
+                    ? "Archived"
+                    : tournament?.visibility === "official"
+                      ? "Official listing"
+                      : tournament?.visibility === "community"
+                        ? "Community listing"
+                        : "Private / code-only"}
                 </p>
               </div>
               <div className="heading-actions">
@@ -630,6 +692,47 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                     }
                   />
                 )}
+                {snapshot.canEdit && tournament && (
+                  <TournamentSettingsDialog
+                    tournament={tournament}
+                    canChangeVisibility={snapshot.canChangeVisibility}
+                    canUseOfficial={payload.canCreateOfficialTournaments}
+                    working={working}
+                    onSave={(form) =>
+                      mutate(
+                        { action: "update_tournament", tournamentId: tournament.id, ...form },
+                        "Tournament settings updated",
+                      )
+                    }
+                  />
+                )}
+                {snapshot.canArchiveTournament && tournament && (
+                  <DangerConfirmDialog
+                    triggerLabel={tournament.archivedAt ? "Restore" : "Archive"}
+                    title={
+                      tournament.archivedAt
+                        ? `Restore ${tournament.name}?`
+                        : `Archive ${tournament.name}?`
+                    }
+                    description={
+                      tournament.archivedAt
+                        ? "The tournament will return to its previous control state. Registration remains closed until you reopen it."
+                        : "The tournament will leave public listings and registration will close. Players, rounds, pairings, and results are preserved."
+                    }
+                    working={working}
+                    icon="archive"
+                    onConfirm={() =>
+                      mutate(
+                        {
+                          action: "set_tournament_archived",
+                          tournamentId: tournament.id,
+                          archived: !tournament.archivedAt,
+                        },
+                        tournament.archivedAt ? "Tournament restored" : "Tournament archived",
+                      )
+                    }
+                  />
+                )}
                 {snapshot.canJoin && (
                   <Button
                     onClick={() =>
@@ -643,21 +746,15 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                     <UserPlus /> Join
                   </Button>
                 )}
-                {!payload.authenticated &&
-                  tournament?.registrationOpen &&
-                  tournament.currentRound === 0 && (
-                    <a className="signin-link join-signin" href={signInPath} target="_top">
-                      Sign in to join <ArrowRight />
-                    </a>
-                  )}
                 {payload.canCreateTournament && (
                   <CreateTournamentDialog
                     open={createOpen}
-                    onOpenChange={setCreateOpen}
+                    onOpenChange={changeCreateOpen}
                     form={tournamentForm}
                     setForm={setTournamentForm}
                     onSubmit={createTournament}
                     working={working}
+                    canUseOfficial={payload.canCreateOfficialTournaments}
                   />
                 )}
               </div>
@@ -670,9 +767,8 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                   <strong>{tournament?.joinCode ?? "—"}</strong>
                 </div>
                 <p>
-                  Share this code. Players sign in, enter it once,
-                  and the tournament stays in their library. Before round one,
-                  check in every active player.
+                  Share this code. Players enter it and register without an
+                  account. Before round one, check in every active player.
                 </p>
                 <div className="join-strip-actions">
                   {tournament?.currentRound === 0 && (
@@ -728,9 +824,23 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                   <strong>PLAYER</strong>
                 </div>
                 <p>
-                  You are registered. Pairings, results and standings will stay
-                  synced to this Freak Swiss account.
+                  You are registered on this browser. Your previous results stay
+                  in the tournament if you later withdraw.
                 </p>
+                {snapshot.canSelfWithdraw && currentPlayer && !currentPlayer.withdrawn && (
+                  <DangerConfirmDialog
+                    triggerLabel="Withdraw"
+                    title={`Withdraw ${currentPlayer.name} from this tournament?`}
+                    description="Previous pairings, results, and statistics will remain. You will not be paired in future rounds. This is different from skipping one round, and only tournament staff can reactivate you."
+                    working={working}
+                    onConfirm={() =>
+                      mutate(
+                        { action: "self_withdraw", tournamentId: tournament?.id },
+                        "You withdrew from future rounds",
+                      )
+                    }
+                  />
+                )}
               </section>
             ) : guestEntry ? (
               <section className="join-strip participant-strip">
@@ -860,6 +970,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                     <TabsList variant="line" className="swiss-tabs">
                       <TabsTrigger value="pairings">Pairings</TabsTrigger>
                       <TabsTrigger value="standings">Standings</TabsTrigger>
+                      <TabsTrigger value="crosstable">Crosstable</TabsTrigger>
                       <TabsTrigger value="players">Players</TabsTrigger>
                     </TabsList>
                     {snapshot.canEdit && (
@@ -920,6 +1031,13 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                   </div>
 
                   <TabsContent value="pairings" className="tab-panel">
+                    {tournament && (
+                      <PrintHeader
+                        tournament={tournament}
+                        title={`Pairings · Round ${viewedRound || 1}`}
+                        serverTime={payload.serverTime}
+                      />
+                    )}
                     {tournament && tournament.currentRound > 0 && (
                       <div className="round-archive" aria-label="Tournament round archive">
                         <div className="round-archive-heading">
@@ -954,6 +1072,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                             </button>
                           ))}
                         </div>
+                        <PrintAction label="Print / Save PDF" />
                       </div>
                     )}
                     <PairingsTable
@@ -969,7 +1088,20 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                   </TabsContent>
 
                   <TabsContent value="standings" className="tab-panel">
-                    <Table className="swiss-table">
+                    {tournament && (
+                      <>
+                        <PrintHeader
+                          tournament={tournament}
+                          title={`Standings · After round ${tournament.currentRound}`}
+                          serverTime={payload.serverTime}
+                        />
+                        <div className="table-print-toolbar">
+                          <PrintAction label="Print / Save PDF" />
+                        </div>
+                      </>
+                    )}
+                    <div className="table-scroll-shell">
+                    <Table className="swiss-table standings-table">
                       <TableHeader>
                         <TableRow>
                           <TableHead>#</TableHead>
@@ -997,6 +1129,69 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="crosstable" className="tab-panel">
+                    {tournament && (
+                      <>
+                        <PrintHeader
+                          tournament={tournament}
+                          title={`Crosstable · After round ${tournament.currentRound}`}
+                          serverTime={payload.serverTime}
+                        />
+                        <div className="table-print-toolbar">
+                          <p>Opponent seed · colour · result</p>
+                          <PrintAction label="Print / Save PDF" />
+                        </div>
+                      </>
+                    )}
+                    <div className="crosstable-scroll" role="region" aria-label="Tournament crosstable" tabIndex={0}>
+                      <Table className="swiss-table crosstable-table">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="cross-rank">#</TableHead>
+                            <TableHead className="cross-player">Player</TableHead>
+                            <TableHead>Rtng</TableHead>
+                            {Array.from(
+                              { length: tournament?.currentRound ?? 0 },
+                              (_, index) => (
+                                <TableHead key={index}>R{index + 1}</TableHead>
+                              ),
+                            )}
+                            <TableHead>Pts</TableHead>
+                            <TableHead>BH</TableHead>
+                            <TableHead>SB</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {crosstableRows.map(({ standing, player, rounds }) => (
+                            <TableRow key={player.id}>
+                              <TableCell className="rank-cell cross-rank">
+                                {standing.rank}
+                              </TableCell>
+                              <TableCell className="player-name-cell cross-player">
+                                {player.name}
+                                {player.isYou && <span className="you-tag">YOU</span>}
+                              </TableCell>
+                              <TableCell>{standing.rating || "—"}</TableCell>
+                              {rounds.map((cell, index) => (
+                                <TableCell key={index} title={cell.title}>
+                                  <span className={`cross-cell cross-${cell.kind}`}>
+                                    {cell.label}
+                                  </span>
+                                </TableCell>
+                              ))}
+                              <TableCell className="score-cell">
+                                {score(standing.score)}
+                              </TableCell>
+                              <TableCell>{score(standing.buchholz)}</TableCell>
+                              <TableCell>{score(standing.sonnebornBerger)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
                   </TabsContent>
 
                   <TabsContent value="players" className="tab-panel">
@@ -1418,6 +1613,42 @@ function Metric({
   );
 }
 
+function PrintHeader({
+  tournament,
+  title,
+  serverTime,
+}: {
+  tournament: Tournament;
+  title: string;
+  serverTime: string;
+}) {
+  return (
+    <header className="print-header">
+      <p>FREAK SWISS MANAGER</p>
+      <h1>{tournament.name}</h1>
+      <div>
+        <strong>{title}</strong>
+        <span>
+          {tournament.city} · Generated {new Date(serverTime).toLocaleString()}
+        </span>
+      </div>
+    </header>
+  );
+}
+
+function PrintAction({ label }: { label: string }) {
+  return (
+    <Button
+      className="print-action"
+      variant="outline"
+      type="button"
+      onClick={() => window.print()}
+    >
+      <Printer /> {label}
+    </Button>
+  );
+}
+
 function PairingsTable({
   pairings,
   standings,
@@ -1574,9 +1805,19 @@ function TournamentLibrary({
   createOpen: boolean;
   setCreateOpen: (open: boolean) => void;
   signInPath: string;
-  tournamentForm: { name: string; city: string; rounds: number };
+  tournamentForm: {
+    name: string;
+    city: string;
+    rounds: number;
+    visibility: TournamentVisibility;
+  };
   setTournamentForm: (
-    value: { name: string; city: string; rounds: number },
+    value: {
+      name: string;
+      city: string;
+      rounds: number;
+      visibility: TournamentVisibility;
+    },
   ) => void;
   createTournament: (event: FormEvent) => void;
   working: boolean;
@@ -1599,10 +1840,10 @@ function TournamentLibrary({
           <h1>Your tournament<br />library.</h1>
         </div>
         <div className="library-intro">
-        <p>
-            Moderators operate assigned tournaments. Players can only register,
-            view pairings and follow standings from their signed-in account.
-        </p>
+          <p>
+            Anyone can join a tournament by code without an account. Sign in
+            only to create and manage tournaments or activate moderator access.
+          </p>
           <div className="library-actions">
             {payload.authenticated ? (
               <>
@@ -1614,12 +1855,10 @@ function TournamentLibrary({
                     setForm={setTournamentForm}
                     onSubmit={createTournament}
                     working={working}
+                    canUseOfficial={payload.canCreateOfficialTournaments}
                     prominent
                   />
                 )}
-                <Button variant="outline" onClick={() => onJoinTournament()}>
-                  <KeyRound /> Join with code
-                </Button>
                 {payload.viewerGlobalRole !== "superadmin" && (
                   <Button variant="outline" onClick={onRedeemModerator}>
                     <ShieldCheck /> Use moderator token
@@ -1627,20 +1866,18 @@ function TournamentLibrary({
                 )}
               </>
             ) : (
-              <>
-                <a className="large-signin" href={signInPath} target="_top">
-                  Sign in <ArrowRight />
-                </a>
-                <a className="guest-join-link" href="/guest/join">
-                  <KeyRound /> Join a tournament as a guest
-                </a>
-              </>
+              <a className="signin-link" href={signInPath} target="_top">
+                Sign in to create <ArrowRight />
+              </a>
             )}
+            <Button variant="outline" onClick={() => onJoinTournament()}>
+              <KeyRound /> Join with code
+            </Button>
           </div>
         </div>
       </section>
 
-      {payload.authenticated && (
+      {(payload.authenticated || payload.tournaments.length > 0) && (
         <section className="library-section">
           <div className="library-section-title">
             <p className="section-code">01 / YOUR TOURNAMENTS</p>
@@ -1660,7 +1897,7 @@ function TournamentLibrary({
           ) : (
             <div className="empty-library-note">
               <strong>No saved tournaments yet.</strong>
-              <span>Create one as admin or join one with a code.</span>
+              <span>Create a tournament or join one with its code.</span>
             </div>
           )}
         </section>
@@ -1682,9 +1919,9 @@ function TournamentLibrary({
       <section className="library-section open-section">
         <div className="library-section-title">
           <p className="section-code">
-            {payload.authenticated ? "02" : "01"} / OPEN REGISTRATION
+            {payload.authenticated ? "02" : "01"} / OFFICIAL TOURNAMENTS
           </p>
-          <span>{payload.openTournaments.length} OPEN</span>
+          <span>{payload.openTournaments.length} LISTED</span>
         </div>
         {payload.openTournaments.length ? (
           <div className="tournament-card-grid">
@@ -1693,14 +1930,46 @@ function TournamentLibrary({
                 key={item.id}
                 item={item}
                 onOpen={onOpenTournament}
-                onJoin={payload.authenticated ? onJoinTournament : undefined}
+                onJoin={
+                  item.registrationOpen && item.currentRound === 0
+                    ? onJoinTournament
+                    : undefined
+                }
               />
             ))}
           </div>
         ) : (
           <div className="empty-library-note">
-            <strong>No public registrations are open.</strong>
+            <strong>No official tournaments are listed.</strong>
             <span>You can still join a private listing with its six-character code.</span>
+          </div>
+        )}
+      </section>
+
+      <section className="library-section community-section" id="community-tournaments">
+        <div className="library-section-title">
+          <p className="section-code">COMMUNITY TOURNAMENTS</p>
+          <span>{payload.communityTournaments.length} LISTED</span>
+        </div>
+        {payload.communityTournaments.length ? (
+          <div className="tournament-card-grid">
+            {payload.communityTournaments.map((item) => (
+              <TournamentCard
+                key={item.id}
+                item={item}
+                onOpen={onOpenTournament}
+                onJoin={
+                  item.registrationOpen && item.currentRound === 0
+                    ? onJoinTournament
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="empty-library-note">
+            <strong>No community tournaments are listed.</strong>
+            <span>Private tournaments remain available only through their link or code.</span>
           </div>
         )}
       </section>
@@ -1730,6 +1999,8 @@ function TournamentCard({
       ? "SUPERADMIN"
       : item.role === "moderator"
         ? "MODERATOR"
+        : item.role === "organizer"
+          ? "OWNER"
         : item.role === "player"
           ? "PLAYER"
           : "OPEN";
@@ -1738,14 +2009,15 @@ function TournamentCard({
     <article className="tournament-card">
       <div className="tournament-card-topline">
         <span className={`role-badge role-${item.role}`}>{roleLabel}</span>
-        <span>{statusLabel(item.status)}</span>
+        <span>{item.archivedAt ? "Archived" : statusLabel(item.status)}</span>
       </div>
       <h2>{item.name}</h2>
       <p>{item.city || "Location not set"}</p>
       <div className="card-meta">
         <span>{item.playerCount} players</span>
         <span>Round {item.currentRound}/{item.rounds}</span>
-        {(item.role === "superadmin" || item.role === "moderator") && item.joinCode && (
+        <span>{item.visibility === "official" ? "Official" : item.visibility === "community" ? "Community" : "Private"}</span>
+        {(item.role === "superadmin" || item.role === "moderator" || item.role === "organizer") && item.joinCode && (
           <span>Code {item.joinCode}</span>
         )}
       </div>
@@ -1979,19 +2251,23 @@ function DangerConfirmDialog({
   description: string;
   working: boolean;
   onConfirm: () => void | Promise<unknown>;
-  icon?: "trash" | "undo";
+  icon?: "trash" | "undo" | "archive";
 }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
         <Button variant="outline" size="sm" disabled={working}>
-          {icon === "undo" ? <Undo2 /> : <Trash2 />} {triggerLabel}
+          {icon === "undo" ? <Undo2 /> : icon === "archive" ? <Archive /> : <Trash2 />} {triggerLabel}
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent className="confirmation-dialog">
         <AlertDialogHeader>
           <p className="section-code">
-            {icon === "undo" ? "ROUND / CONTROL" : "CONFIRM / PERMANENT ACTION"}
+            {icon === "undo"
+              ? "ROUND / CONTROL"
+              : icon === "archive"
+                ? "TOURNAMENT / ARCHIVE"
+                : "CONFIRM / PERMANENT ACTION"}
           </p>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
@@ -2003,7 +2279,7 @@ function DangerConfirmDialog({
             disabled={working}
             onClick={() => void onConfirm()}
           >
-            {icon === "undo" ? <Undo2 /> : <Trash2 />} Confirm
+            {icon === "undo" ? <Undo2 /> : icon === "archive" ? <Archive /> : <Trash2 />} Confirm
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -2058,14 +2334,26 @@ function CreateTournamentDialog({
   setForm,
   onSubmit,
   working,
+  canUseOfficial,
   prominent = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  form: { name: string; city: string; rounds: number };
-  setForm: (form: { name: string; city: string; rounds: number }) => void;
+  form: {
+    name: string;
+    city: string;
+    rounds: number;
+    visibility: TournamentVisibility;
+  };
+  setForm: (form: {
+    name: string;
+    city: string;
+    rounds: number;
+    visibility: TournamentVisibility;
+  }) => void;
   onSubmit: (event: FormEvent) => void;
   working: boolean;
+  canUseOfficial: boolean;
   prominent?: boolean;
 }) {
   return (
@@ -2112,9 +2400,143 @@ function CreateTournamentDialog({
               onChange={(event) => setForm({ ...form, rounds: Number(event.target.value) })}
             />
           </label>
+          <label>
+            <span>Visibility</span>
+            <Select
+              value={form.visibility}
+              onValueChange={(value) =>
+                setForm({ ...form, visibility: value as TournamentVisibility })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {canUseOfficial && <SelectItem value="official">Official / featured</SelectItem>}
+                <SelectItem value="community">Community</SelectItem>
+                <SelectItem value="private">Private / code-only</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
           <DialogFooter>
             <Button type="submit" disabled={working}>
               Create control desk <ArrowRight />
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TournamentSettingsDialog({
+  tournament,
+  canChangeVisibility,
+  canUseOfficial,
+  working,
+  onSave,
+}: {
+  tournament: Tournament;
+  canChangeVisibility: boolean;
+  canUseOfficial: boolean;
+  working: boolean;
+  onSave: (form: {
+    name: string;
+    city: string;
+    rounds: number;
+    visibility: TournamentVisibility;
+  }) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    name: tournament.name,
+    city: tournament.city,
+    rounds: tournament.rounds,
+    visibility: tournament.visibility,
+  });
+
+  function changeOpen(next: boolean) {
+    if (next) {
+      setForm({
+        name: tournament.name,
+        city: tournament.city,
+        rounds: tournament.rounds,
+        visibility: tournament.visibility,
+      });
+    }
+    setOpen(next);
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (await onSave(form)) setOpen(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline">
+          <Pencil /> Settings
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="create-dialog">
+        <DialogHeader>
+          <p className="section-code">TOURNAMENT / SETTINGS</p>
+          <DialogTitle>Edit the tournament.</DialogTitle>
+          <DialogDescription>
+            Update this tournament without changing its players, rounds, or results.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="dialog-form" onSubmit={submit}>
+          <label>
+            <span>Tournament name</span>
+            <Input
+              required
+              autoFocus
+              value={form.name}
+              onChange={(event) => setForm({ ...form, name: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>City / venue</span>
+            <Input
+              value={form.city}
+              onChange={(event) => setForm({ ...form, city: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Scheduled rounds</span>
+            <Input
+              type="number"
+              min={Math.max(3, tournament.currentRound)}
+              max={15}
+              value={form.rounds}
+              onChange={(event) => setForm({ ...form, rounds: Number(event.target.value) })}
+            />
+          </label>
+          {canChangeVisibility && (
+            <label>
+              <span>Visibility</span>
+              <Select
+                value={form.visibility}
+                onValueChange={(value) =>
+                  setForm({ ...form, visibility: value as TournamentVisibility })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {canUseOfficial && <SelectItem value="official">Official / featured</SelectItem>}
+                  <SelectItem value="community">Community</SelectItem>
+                  <SelectItem value="private">Private / code-only</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+          )}
+          <DialogFooter>
+            <Button type="submit" disabled={working}>
+              Save settings <ArrowRight />
             </Button>
           </DialogFooter>
         </form>

@@ -68,7 +68,7 @@ export function AuthPanel({ returnTo }: { returnTo: string }) {
           <p className="auth-intro">
             {mode === "login"
               ? "Use your independent Freak Swiss account."
-              : "Players can register freely. Moderator access is granted later with a single-use tournament token."}
+              : "Create an organizer account to run your own tournaments. Players join tournaments by code without an account; moderator access is still granted with a single-use token."}
           </p>
 
           <div className="auth-mode" role="tablist" aria-label="Account action">

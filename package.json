@@ -17,7 +17,8 @@
     "benchmark:generate": "node scripts/generate-benchmark-cache.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "deploy": "npm run db:migrate:remote && vinext deploy --skip-build"
+    "db:verify:remote": "wrangler d1 execute DB --remote --command \"SELECT t.visibility, t.archived_at, p.withdrawn_from_round, ps.token_hash, ua.email, ac.password_iterations, session.expires_at FROM tournaments t LEFT JOIN players p ON p.tournament_id = t.id LEFT JOIN player_sessions ps ON ps.tournament_id = t.id LEFT JOIN user_accounts ua ON ua.email = t.owner_email LEFT JOIN auth_credentials ac ON ac.email = ua.email LEFT JOIN auth_sessions session ON session.email = ua.email LIMIT 0\"",
+    "deploy": "npm run db:migrate:remote && npm run db:verify:remote && vinext deploy --skip-build"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

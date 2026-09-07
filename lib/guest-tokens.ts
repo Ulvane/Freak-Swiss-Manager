@@ -115,7 +115,7 @@ export async function verifyGuestToken(
        FROM guest_tokens gt
        JOIN players p
          ON p.id = gt.player_id AND p.tournament_id = gt.tournament_id
-       WHERE gt.token_hash = ? AND gt.expires_at > ?`,
+       WHERE gt.token_hash = ? AND gt.expires_at > ? AND p.account_email IS NULL`,
     )
     .bind(tokenHash, now.toISOString())
     .first<GuestIdentity>();

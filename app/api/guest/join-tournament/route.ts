@@ -8,6 +8,7 @@ type RawTournament = {
   id: string;
   registrationOpen: number | boolean;
   currentRound: number;
+  archivedAt: string | null;
 };
 
 type GuestJoinBody = {
@@ -42,14 +43,14 @@ export async function POST(request: Request) {
     const tournament = directId
       ? await database
           .prepare(
-            `SELECT id, registration_open AS registrationOpen, current_round AS currentRound
+            `SELECT id, registration_open AS registrationOpen, current_round AS currentRound, archived_at AS archivedAt
              FROM tournaments WHERE id = ?`,
           )
           .bind(directId)
           .first<RawTournament>()
       : await database
           .prepare(
-            `SELECT id, registration_open AS registrationOpen, current_round AS currentRound
+            `SELECT id, registration_open AS registrationOpen, current_round AS currentRound, archived_at AS archivedAt
              FROM tournaments WHERE UPPER(join_code) = ?`,
           )
           .bind(code)
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
     if (!tournament) {
       return Response.json({ error: "Tournament code not found." }, { status: 404 });
     }
-    if (!tournament.registrationOpen || Number(tournament.currentRound) > 0) {
+    if (tournament.archivedAt || !tournament.registrationOpen || Number(tournament.currentRound) > 0) {
       return Response.json(
         { error: "Registration is closed for this tournament." },
         { status: 409 },

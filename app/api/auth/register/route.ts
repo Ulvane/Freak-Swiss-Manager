@@ -85,13 +85,21 @@ export async function POST(request: Request) {
       { headers: { "set-cookie": sessionCookie(token, secure) } },
     );
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes("UNIQUE constraint failed: auth_credentials.email")
-    ) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Account registration failed", {
+      kind: message.includes("no such table") ? "database_schema" : "runtime",
+      message,
+    });
+    if (message.includes("UNIQUE constraint failed") && message.includes("auth_credentials")) {
       return Response.json(
         { error: "An account already exists for this email. Sign in instead." },
         { status: 409 },
+      );
+    }
+    if (message.includes("no such table") || message.includes("no column named")) {
+      return Response.json(
+        { error: "Account registration is temporarily unavailable while the database is upgraded." },
+        { status: 503 },
       );
     }
     return Response.json(

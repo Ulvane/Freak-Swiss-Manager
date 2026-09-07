@@ -12,6 +12,8 @@ export const tournaments = sqliteTable(
     registrationOpen: integer("registration_open", { mode: "boolean" })
       .notNull()
       .default(true),
+    visibility: text("visibility").notNull().default("official"),
+    archivedAt: text("archived_at"),
     currentRound: integer("current_round").notNull().default(0),
     status: text("status").notNull().default("draft"),
     createdAt: text("created_at").notNull(),
@@ -36,6 +38,7 @@ export const players = sqliteTable(
     rating: integer("rating").notNull().default(0),
     seed: integer("seed").notNull(),
     withdrawn: integer("withdrawn", { mode: "boolean" }).notNull().default(false),
+    withdrawnFromRound: integer("withdrawn_from_round"),
     checkedIn: integer("checked_in", { mode: "boolean" }).notNull().default(false),
     guestExpiresAt: text("guest_expires_at"),
     guestTokenHash: text("guest_token_hash"),
@@ -50,6 +53,31 @@ export const players = sqliteTable(
       table.accountEmail,
     ),
     uniqueIndex("players_seed_unique").on(table.tournamentId, table.seed),
+  ],
+);
+
+export const playerSessions = sqliteTable(
+  "player_sessions",
+  {
+    id: text("id").primaryKey(),
+    tokenHash: text("token_hash").notNull(),
+    tournamentId: text("tournament_id")
+      .notNull()
+      .references(() => tournaments.id, { onDelete: "cascade" }),
+    playerId: text("player_id")
+      .notNull()
+      .references(() => players.id, { onDelete: "cascade" }),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("player_sessions_token_idx").on(table.tokenHash),
+    index("player_sessions_expiry_idx").on(table.expiresAt),
+    uniqueIndex("player_sessions_token_tournament_unique").on(
+      table.tokenHash,
+      table.tournamentId,
+    ),
+    uniqueIndex("player_sessions_player_unique").on(table.playerId),
   ],
 );
 

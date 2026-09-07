@@ -37,6 +37,50 @@ export type PairingOptions = {
   expectedRounds?: number;
 };
 
+/**
+ * FIDE C.04.2 article 3.6 publication order. The board number is based on
+ * score and TPN (seed); colour allocation must never decide which board is
+ * published first.
+ */
+export function sortPairingsForPublication(
+  pairings: EnginePairing[],
+  players: PairingPlayer[],
+): EnginePairing[] {
+  const playerById = new Map(players.map((player) => [player.id, player]));
+  const details = (pairing: EnginePairing) => {
+    const white = playerById.get(pairing.whitePlayerId);
+    const black = pairing.blackPlayerId
+      ? playerById.get(pairing.blackPlayerId)
+      : undefined;
+    const participants = [white, black].filter(
+      (player): player is PairingPlayer => Boolean(player),
+    );
+    const higher = [...participants].sort(
+      (first, second) =>
+        second.score - first.score || first.seed - second.seed,
+    )[0];
+    const lower = participants.find((player) => player.id !== higher?.id);
+    return {
+      higherScore: higher?.score ?? -1,
+      scoreSum: participants.reduce((sum, player) => sum + player.score, 0),
+      higherSeed: higher?.seed ?? Number.MAX_SAFE_INTEGER,
+      lowerSeed: lower?.seed ?? Number.MAX_SAFE_INTEGER,
+    };
+  };
+
+  return pairings
+    .map((pairing, index) => ({ pairing, index, details: details(pairing) }))
+    .sort(
+      (first, second) =>
+        second.details.higherScore - first.details.higherScore ||
+        second.details.scoreSum - first.details.scoreSum ||
+        first.details.higherSeed - second.details.higherSeed ||
+        first.details.lowerSeed - second.details.lowerSeed ||
+        first.index - second.index,
+    )
+    .map(({ pairing }) => pairing);
+}
+
 export function resultPoints(result: ResultCode, side: "white" | "black") {
   if (result === "1-BYE") return side === "white" ? 1 : 0;
   if (result === "1-0" || result === "1F-0F") {
@@ -193,7 +237,7 @@ export function createSwissPairings(
     expectedRounds: options.expectedRounds ?? rounds.length + 1,
   });
 
-  return [
+  return sortPairingsForPublication([
     ...generated.games.map((pairing) => ({
       whitePlayerId: pairing.white,
       blackPlayerId: pairing.black,
@@ -204,5 +248,5 @@ export function createSwissPairings(
       blackPlayerId: null,
       result: "1-BYE" as const,
     })),
-  ];
+  ], players);
 }

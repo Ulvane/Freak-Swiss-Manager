@@ -64,20 +64,24 @@ export async function POST(request: Request) {
     }
 
     const tournament = await database
-      .prepare(`SELECT current_round AS currentRound FROM tournaments WHERE id = ?`)
+      .prepare(`SELECT current_round AS currentRound, archived_at AS archivedAt FROM tournaments WHERE id = ?`)
       .bind(tournamentId)
-      .first<{ currentRound: number }>();
+      .first<{ currentRound: number; archivedAt: string | null }>();
     if (!tournament) {
       return Response.json({ error: "Tournament not found." }, { status: 404 });
+    }
+    if (tournament.archivedAt) {
+      return Response.json({ error: "This tournament is archived." }, { status: 409 });
     }
 
     await database.batch([
       database
         .prepare(
-          `UPDATE players SET withdrawn = 1, checked_in = 0
+          `UPDATE players SET withdrawn = 1, checked_in = 0,
+           withdrawn_from_round = COALESCE(withdrawn_from_round, ?)
            WHERE id = ? AND tournament_id = ?`,
         )
-        .bind(playerId, tournamentId),
+        .bind(Number(tournament.currentRound) + 1, playerId, tournamentId),
       database
         .prepare(
           `DELETE FROM player_round_statuses

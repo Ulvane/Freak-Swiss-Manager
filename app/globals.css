@@ -181,6 +181,16 @@ a {
   border-bottom: 1px solid var(--ink);
 }
 
+.topbar-button {
+  padding: 0;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
 .audit-link {
   display: inline-flex;
   align-items: center;
@@ -735,6 +745,118 @@ a {
 
 .tab-panel {
   margin-top: 0;
+}
+
+.print-header {
+  display: none;
+}
+
+.table-print-toolbar {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.table-print-toolbar p {
+  margin: 0 auto 0 0;
+  color: var(--quiet);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.print-action {
+  min-width: max-content;
+}
+
+.table-scroll-shell,
+.crosstable-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.crosstable-scroll:focus-visible {
+  outline: 3px solid var(--red);
+  outline-offset: -3px;
+}
+
+.crosstable-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.crosstable-table th,
+.crosstable-table td {
+  min-width: 78px;
+  white-space: nowrap;
+}
+
+.crosstable-table .cross-rank {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  min-width: 52px;
+  background: var(--white);
+}
+
+.crosstable-table .cross-player {
+  position: sticky;
+  left: 52px;
+  z-index: 2;
+  min-width: 210px;
+  max-width: 280px;
+  overflow: hidden;
+  background: var(--white);
+  text-overflow: ellipsis;
+}
+
+.crosstable-table thead .cross-rank,
+.crosstable-table thead .cross-player {
+  z-index: 5;
+}
+
+.crosstable-table tr:hover .cross-rank,
+.crosstable-table tr:hover .cross-player {
+  background: #f4f1e8;
+}
+
+.cross-cell {
+  display: inline-flex;
+  min-width: 50px;
+  justify-content: center;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.cross-bye {
+  border-color: #7888c8;
+  color: #293a83;
+}
+
+.cross-skip {
+  border-color: #d8a73d;
+  color: #765400;
+}
+
+.cross-withdrawn {
+  border-color: #e0a4aa;
+  color: #9b0010;
+}
+
+.cross-empty {
+  border-color: transparent;
+  color: var(--quiet);
 }
 
 .swiss-table th {
@@ -2464,7 +2586,9 @@ a {
 
   .swiss-tabs {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 3px;
   }
 
   .pair-button {
@@ -2587,6 +2711,143 @@ a {
   .admin-directory-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  :root {
+    --paper: #ffffff;
+    --ink: #000000;
+    --line: #8a8a8a;
+    --quiet: #333333;
+    --white: #ffffff;
+  }
+
+  html,
+  body,
+  .app-shell,
+  .workspace,
+  .data-surface,
+  .control-grid {
+    display: block;
+    min-width: 0;
+    min-height: 0;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .brand-rail,
+  .topbar,
+  .control-heading,
+  .join-strip,
+  .moderator-strip,
+  .metric-grid,
+  .round-block,
+  .surface-toolbar,
+  .round-archive,
+  .table-print-toolbar,
+  .pairing-guidance,
+  .product-note,
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+
+  .tab-panel[data-state="inactive"] {
+    display: none !important;
+  }
+
+  .tab-panel[data-state="active"] {
+    display: block !important;
+  }
+
+  .print-header {
+    display: block;
+    margin: 0 0 8mm;
+    padding: 0 0 5mm;
+    border-bottom: 2px solid #000000;
+  }
+
+  .print-header p,
+  .print-header h1,
+  .print-header div {
+    margin: 0;
+  }
+
+  .print-header p {
+    font-size: 8pt;
+    font-weight: 900;
+    letter-spacing: 0.15em;
+  }
+
+  .print-header h1 {
+    margin-top: 2mm;
+    font-size: 22pt;
+    line-height: 1;
+  }
+
+  .print-header div {
+    display: flex;
+    justify-content: space-between;
+    gap: 8mm;
+    margin-top: 3mm;
+    font-size: 9pt;
+  }
+
+  .table-scroll-shell,
+  .crosstable-scroll {
+    overflow: visible;
+  }
+
+  .swiss-table,
+  .crosstable-table {
+    width: 100%;
+    min-width: 0;
+    border-collapse: collapse;
+    font-size: 8pt;
+  }
+
+  .swiss-table th,
+  .swiss-table td,
+  .crosstable-table th,
+  .crosstable-table td {
+    position: static !important;
+    min-width: 0;
+    height: auto;
+    padding: 2.2mm 1.8mm;
+    border: 1px solid #777777;
+    background: #ffffff !important;
+    color: #000000 !important;
+    break-inside: avoid;
+  }
+
+  .cross-cell,
+  .pairing-points {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent !important;
+    color: #000000 !important;
+  }
+
+  .result-choice-group button:not(.is-selected) {
+    display: none;
+  }
+
+  .result-choice-group,
+  .result-choice-group button.is-selected {
+    border: 0;
+    background: transparent !important;
+    color: #000000 !important;
+  }
+
+  .you-tag,
+  .status-dot::before {
+    display: none;
   }
 }
 
