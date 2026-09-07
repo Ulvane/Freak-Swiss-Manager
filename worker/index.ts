@@ -3,6 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 
 import { cleanupExpiredGuestPlayers } from "../lib/guest-players";
+import { cleanupExpiredPlayerSessions } from "../lib/player-session";
 
 interface Env {
   ASSETS: Fetcher;
@@ -46,8 +47,15 @@ const worker = {
   },
 
   scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(cleanupExpiredGuestPlayers(env.DB));
+    ctx.waitUntil(cleanupScheduledData(env.DB));
   },
 };
+
+async function cleanupScheduledData(database: D1Database) {
+  await cleanupExpiredGuestPlayers(database);
+  await cleanupExpiredPlayerSessions(database);
+  await database.prepare(`DELETE FROM guest_tokens WHERE expires_at <= ?`)
+    .bind(new Date().toISOString()).run();
+}
 
 export default worker;

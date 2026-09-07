@@ -6,38 +6,45 @@
 tournaments. The short name is **Freak Swiss**; the edition name is **Swiss
 Manager K Edition**.
 
-- Live application: Cloudflare deployment in progress
+- Live application: [freak-swiss-manager.ulvane.workers.dev](https://freak-swiss-manager.ulvane.workers.dev/)
 - Public source: [github.com/Ulvane/Freak-Swiss-Manager](https://github.com/Ulvane/Freak-Swiss-Manager)
 - Project statement: [PROTEST.md](PROTEST.md)
-
-> **Open beta:** Test the software with non-rated events before relying on it for an official tournament.
 
 ## What it does
 
 - Creates Swiss tournaments with three to fifteen rounds.
-- Registers players by a six-character tournament code.
+- Registers players without an account by a six-character tournament code and
+  a private browser session.
 - Supports temporary guest roster entries that expire after three days unless
   Round 1 has started.
 - Requires player check-in before Round 1.
 - Generates deterministic Swiss pairings with pairing-history safeguards.
 - Records results as `1-0`, `0-1` or draw.
-- Shows current and archived rounds, board numbers, scores and standings.
+- Shows current and archived rounds, board numbers, scores, standings and a
+  round-by-round crosstable.
+- Prints pairings, results, standings and crosstables using an A4-friendly view.
 - Supports withdrawals, one-round skips and manual one-point byes.
 - Delegates one tournament at a time through single-use moderator tokens.
-- Keeps a superadmin-only token and account ledger.
+- Keeps a superadmin account and an auditable moderator-token ledger.
 
 ## Roles and permissions
 
-| Capability | Superadmin | Assigned moderator | Player |
-| --- | --- | --- | --- |
-| Create or delete tournaments | Yes | No | No |
-| Manage an assigned tournament | All tournaments | Assigned tournament only | No |
-| Add, remove and check in players | Yes | Assigned tournament only | No |
-| Generate or delete the latest round | Yes | Assigned tournament only | No |
-| Record current-round results | Yes | Assigned tournament only | No |
-| Invite another tournament moderator | Yes | Assigned tournament only | No |
-| Delete moderators, accounts or token records | Yes | No | No |
-| Register, view pairings and standings | Yes | Yes | Yes |
+| Capability | Superadmin | Approved/assigned moderator | Tournament owner | Player/guest |
+| --- | --- | --- | --- | --- |
+| Create tournaments | Yes | Yes | Yes | No |
+| Publish an official listing | Yes | Yes | No | No |
+| Manage a tournament | All tournaments | Assigned tournament only | Owned tournament only | No |
+| Add, remove and check in players | Yes | Assigned tournament only | Owned tournament only | No |
+| Generate/delete latest round and record results | Yes | Assigned tournament only | Owned tournament only | No |
+| Invite another tournament moderator | Yes | Assigned tournament only | Owned tournament only | No |
+| Delete moderators, accounts or tournaments | Yes | No | No | No |
+| Join, view pairings/standings/crosstable | Yes | Yes | Yes | Yes |
+| Self-withdraw while preserving history | Yes | Yes | Yes | Yes |
+
+Official tournaments appear in the main listing. Ordinary owner-created events
+default to the separate Community Tournaments listing, and private events are
+available only by link or code. Owner-issued moderator invitations grant access
+only to that tournament and never create site-wide moderator privileges.
 
 Permissions are enforced by the server. Hiding a button in the interface is
 not treated as authorization.
@@ -98,6 +105,18 @@ The production application uses a Cloudflare Worker and a D1 database bound as
 
 The deploy command applies every unapplied migration in `drizzle/` before
 publishing the new Worker version.
+
+For the abandoned, empty two-table prototype database only, the tracked
+`scripts/database/repair-empty-legacy-schema.sql` prerequisite preserves its
+original tables under `legacy_empty_*` names before the numbered migrations.
+It refuses nonempty tables. Do not run this prerequisite on an initialized
+database. Migration `0008_odd_lord_tyger` and existing guest tokens are retained;
+`0009_tiresome_demogoblin` adds organizer visibility, archive state, browser
+player sessions, and the withdrawal starting round without deleting records.
+
+The original `/guest/join` page and guest access tokens remain supported.
+New "Join with code" registrations use an HttpOnly browser cookie; both flows
+keep withdrawal separate from a one-round skip and preserve historical games.
 
 Register the intended account first, then set the runtime variable
 `SUPERADMIN_EMAIL` to that account's exact email address. Superadmin access is
