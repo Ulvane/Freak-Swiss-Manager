@@ -13,6 +13,7 @@ import {
   playerSessionExpiryFrom,
   playerSessionTokenFromRequest,
 } from "@/lib/player-session";
+import { findPlayerByFideId, normalizeFideId } from "@/lib/player-registration";
 import {
   createSwissPairings,
   hydratePairingPlayers,
@@ -656,6 +657,7 @@ type ManagerAction =
       visibility?: TournamentVisibility;
     }
   | { action: "set_tournament_archived"; tournamentId?: string; archived?: boolean }
+  | { action: "export_tournament"; tournamentId?: string }
   | { action: "create_test_tournament" }
   | {
       action: "add_player";
@@ -780,21 +782,12 @@ export async function POST(request: Request) {
       if (name.length < 2) {
         return Response.json({ error: "Player name is too short." }, { status: 400 });
       }
-      const fideId = cleanText(body.fideId, 24);
-      if (fideId) {
-        const duplicateFideId = await database
-          .prepare(
-            `SELECT id FROM players
-             WHERE tournament_id = ? AND fide_id <> '' AND fide_id = ?`,
-          )
-          .bind(tournament.id, fideId)
-          .first<{ id: string }>();
-        if (duplicateFideId) {
-          return Response.json(
-            { error: "A player with this FIDE ID is already registered." },
-            { status: 409 },
-          );
-        }
+      const fideId = normalizeFideId(body.fideId);
+      if (await findPlayerByFideId(database, tournament.id, fideId)) {
+        return Response.json(
+          { error: "A player with this FIDE ID is already registered." },
+          { status: 409 },
+        );
       }
 
       const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
@@ -978,7 +971,13 @@ export async function POST(request: Request) {
                  (id, tournament_id, moderator_email, assigned_by_email, created_at)
                VALUES (?, ?, ?, ?, ?)`,
             )
-            .bind(crypto.randomUUID(), token.tournamentId, email, email, now),
+            .bind(
+              crypto.randomUUID(),
+              token.tournamentId,
+              email,
+              token.createdByEmail,
+              now,
+            ),
         );
       }
       await database.batch(writes);
@@ -1303,6 +1302,77 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, tournamentId });
     }
 
+    if (body.action === "export_tournament") {
+      const [playerRows, roundRows, pairingRows, statusRows, moderatorRows] =
+        await Promise.all([
+          database
+            .prepare(
+              `SELECT id, name, fide_id AS fideId, account_email AS accountEmail,
+                      rating, seed, withdrawn,
+                      withdrawn_from_round AS withdrawnFromRound,
+                      checked_in AS checkedIn, created_at AS createdAt
+               FROM players WHERE tournament_id = ? ORDER BY seed ASC`,
+            )
+            .bind(tournamentId)
+            .all(),
+          database
+            .prepare(
+              `SELECT id, number, status, created_at AS createdAt
+               FROM rounds WHERE tournament_id = ? ORDER BY number ASC`,
+            )
+            .bind(tournamentId)
+            .all(),
+          database
+            .prepare(
+              `SELECT id, round_id AS roundId, round_number AS roundNumber,
+                      board_number AS boardNumber,
+                      white_player_id AS whitePlayerId,
+                      black_player_id AS blackPlayerId, result
+               FROM pairings WHERE tournament_id = ?
+               ORDER BY round_number ASC, board_number ASC`,
+            )
+            .bind(tournamentId)
+            .all(),
+          database
+            .prepare(
+              `SELECT player_id AS playerId, round_number AS roundNumber,
+                      status, created_at AS createdAt
+               FROM player_round_statuses WHERE tournament_id = ?
+               ORDER BY round_number ASC, player_id ASC`,
+            )
+            .bind(tournamentId)
+            .all(),
+          database
+            .prepare(
+              `SELECT moderator_email AS email,
+                      assigned_by_email AS assignedByEmail,
+                      created_at AS createdAt
+               FROM tournament_moderators WHERE tournament_id = ?
+               ORDER BY moderator_email ASC`,
+            )
+            .bind(tournamentId)
+            .all(),
+        ]);
+      return Response.json({
+        ok: true,
+        backup: {
+          format: "freak-swiss-tournament",
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          tournament: {
+            ...publicTournament(tournament),
+            ownerEmail: tournament.ownerEmail,
+            joinCode: tournament.joinCode,
+          },
+          players: playerRows.results ?? [],
+          rounds: roundRows.results ?? [],
+          pairings: pairingRows.results ?? [],
+          roundStatuses: statusRows.results ?? [],
+          moderators: moderatorRows.results ?? [],
+        },
+      });
+    }
+
     if (body.action === "delete_tournament") {
       if (!isSuperadmin(email)) {
         return Response.json(
@@ -1330,17 +1400,24 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "add_player") {
-      if (Number(tournament.currentRound) > 0) {
+      const isLateEntry = Number(tournament.currentRound) > 0;
+      if (isLateEntry && tournament.status !== "between_rounds") {
         return Response.json(
-          { error: "Delete the latest round before changing the roster." },
+          { error: "Complete the current round before adding a late entrant." },
           { status: 409 },
         );
       }
       const name = cleanText(body.name, 100);
-      const fideId = cleanText(body.fideId, 24);
+      const fideId = normalizeFideId(body.fideId);
       const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
       if (name.length < 2) {
         return Response.json({ error: "Player name is too short." }, { status: 400 });
+      }
+      if (await findPlayerByFideId(database, tournamentId, fideId)) {
+        return Response.json(
+          { error: "A player with this FIDE ID is already registered." },
+          { status: 409 },
+        );
       }
       const createdAt = new Date();
       await database
@@ -1350,7 +1427,7 @@ export async function POST(request: Request) {
               rating, seed, withdrawn, checked_in, guest_expires_at, created_at)
            VALUES (?, ?, ?, ?, NULL, ?,
              (SELECT COALESCE(MAX(seed), 0) + 1 FROM players WHERE tournament_id = ?),
-             0, 0, ?, ?)`,
+             0, ?, ?, ?)`,
         )
         .bind(
           crypto.randomUUID(),
@@ -1359,7 +1436,8 @@ export async function POST(request: Request) {
           fideId,
           rating,
           tournamentId,
-          guestExpiryFrom(createdAt),
+          isLateEntry ? 1 : 0,
+          isLateEntry ? null : guestExpiryFrom(createdAt),
           createdAt.toISOString(),
         )
         .run();

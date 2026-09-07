@@ -24,8 +24,11 @@ Manager K Edition**.
   round-by-round crosstable.
 - Prints pairings, results, standings and crosstables using an A4-friendly view.
 - Supports withdrawals, one-round skips and manual one-point byes.
+- Allows tournament staff to add checked-in late entrants between completed rounds.
 - Delegates one tournament at a time through single-use moderator tokens.
 - Keeps a superadmin account and an auditable moderator-token ledger.
+- Downloads a complete JSON tournament backup without credentials, session tokens
+  or password data.
 
 ## Roles and permissions
 
@@ -61,7 +64,6 @@ manually.
 - FIDE rating history and progress charts
 - Official rating-change estimates using the current FIDE rules
 - Separate Standard, Rapid and Blitz rating records
-- Broader moderator-role and public-registration testing
 - Additional pairing audit fixtures
 
 Planned features are intentionally listed here instead of being presented as finished functionality.
