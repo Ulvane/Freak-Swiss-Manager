@@ -59,6 +59,8 @@ the product, requirements, visual direction and tests, while AI writes the
 implementation. The maintainer does not intend to write the application code
 manually.
 
+For who wants to know more I used claude opus 4.6, antigravity mostly gemini 3.1 pro and 3.8 flash, gpt 5.6 sol and gpt 6 astra and I used all of em at highest or high. That's all I just wrote prompts.
+
 ## Planned work
 
 - FIDE rating history and progress charts
