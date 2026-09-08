@@ -1,0 +1,90 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788144030201,
+      "tag": "0000_open_mole_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788145329574,
+      "tag": "0001_fearless_wiccan",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788152584947,
+      "tag": "0002_rainy_dragon_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788235152333,
+      "tag": "0003_yielding_martin_li",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788330465232,
+      "tag": "0004_bright_the_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788365366038,
+      "tag": "0005_noisy_sabra",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788382152277,
+      "tag": "0006_black_pandemic",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1788420631938,
+      "tag": "0007_reset_incompatible_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788449209572,
+      "tag": "0008_odd_lord_tyger",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788769236071,
+      "tag": "0009_tiresome_demogoblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788770000000,
+      "tag": "0010_moderation_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1788895059096,
+      "tag": "0011_past_justice",
+      "breakpoints": true
+    }
+  ]
+}

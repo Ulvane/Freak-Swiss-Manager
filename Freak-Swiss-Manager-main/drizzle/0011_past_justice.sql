@@ -1,0 +1,1 @@
+ALTER TABLE `tournaments` ADD `player_limit` integer;
