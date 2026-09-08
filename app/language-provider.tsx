@@ -11,7 +11,7 @@ type LanguageContextValue = {
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 
-const originalText = new WeakMap<Text, string>();
+const originalText = new WeakMap<Text, { source: string; rendered: string }>();
 
 function translateDocument(language: Language) {
   if (typeof document === "undefined") return;
@@ -19,10 +19,14 @@ function translateDocument(language: Language) {
   let node: Node | null = walker.nextNode();
   while (node) {
     const text = node as Text;
-    if (!text.parentElement?.closest(".language-toggle")) {
-      const source = originalText.get(text) ?? text.data;
-      originalText.set(text, source);
-      text.data = translateText(source, language);
+    if (!text.parentElement?.closest(".language-toggle, script, style, textarea")) {
+      const previous = originalText.get(text);
+      // React may reuse a text node for a new score, round, or status.
+      const source = previous && text.data === previous.rendered ? previous.source : text.data;
+      const rendered = translateText(source, language);
+      originalText.set(text, { source, rendered });
+      // Even assigning the same value emits a MutationObserver record.
+      if (text.data !== rendered) text.data = rendered;
     }
     node = walker.nextNode();
   }
@@ -34,8 +38,17 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     document.documentElement.lang = language;
     translateDocument(language);
-    const observer = new MutationObserver(() => translateDocument(language));
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    const options = { childList: true, subtree: true, characterData: true };
+    const observer = new MutationObserver(() => {
+      // Translation must not observe its own writes and starve the event loop.
+      observer.disconnect();
+      try {
+        translateDocument(language);
+      } finally {
+        observer.observe(document.body, options);
+      }
+    });
+    observer.observe(document.body, options);
     return () => observer.disconnect();
   }, [language]);
 
