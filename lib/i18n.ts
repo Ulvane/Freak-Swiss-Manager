@@ -135,6 +135,7 @@ const exactTranslations: Record<string, string> = {
   "Players": "Oyuncular",
   "Status": "Durum",
   "Leader": "Lider",
+  "Champion": "Şampiyon",
   "ROUND": "TUR",
   "Generate round 1": "1. turu oluştur",
   "Generate next round": "Sonraki turu oluştur",

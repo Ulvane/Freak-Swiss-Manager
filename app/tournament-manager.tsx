@@ -31,7 +31,7 @@ import {
 import { useLanguage } from "./language-provider";
 import { translateText } from "@/lib/i18n";
 import { LanguageToggle } from "@/components/language-toggle";
-import { StandingMarker } from "@/components/standing-marker";
+import { StandingMarker, standingAward } from "@/components/standing-marker";
 import { ThemeToggles } from "@/components/theme-toggles";
 import { WheelPicker } from "@/components/wheel-picker";
 import { toast } from "sonner";
@@ -300,6 +300,12 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   );
   const remainingResults = countPendingResults(currentPairings);
   const hasStandingResults = snapshot?.pairings.some((pairing) => pairing.result !== "*") ?? false;
+  const hasChampion = snapshot && standingAward({
+    rank: 1,
+    tournament: snapshot.tournament,
+    hasResults: hasStandingResults,
+    saving: savingResultIds.size > 0,
+  }) === "gold";
   const activePlayerCount = snapshot?.players.filter((player) => !player.withdrawn).length ?? 0;
   const uncheckedPlayerCount =
     snapshot?.players.filter((player) => !player.withdrawn && !player.checkedIn).length ?? 0;
@@ -1124,8 +1130,10 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
               />
               <Metric
                 code="04"
-                label="Leader"
+                label={hasChampion ? "Champion" : "Leader"}
                 value={snapshot.standings[0]?.name ?? "—"}
+                featured
+                accent
                 marker={<StandingMarker rank={1} tournament={snapshot.tournament} hasResults={hasStandingResults} saving={savingResultIds.size > 0} />}
               />
             </section>
@@ -1789,19 +1797,21 @@ function Metric({
   label,
   value,
   marker,
+  featured = false,
   accent = false,
 }: {
   code: string;
   label: string;
   value: string | number;
   marker?: ReactNode;
+  featured?: boolean;
   accent?: boolean;
 }) {
   return (
-    <article className={`metric ${accent ? "metric-accent" : ""}`}>
+    <article className={`metric ${accent ? "metric-accent" : ""} ${featured ? "metric-featured" : ""}`}>
       <span>{code}</span>
       <p>{label}</p>
-      <strong>{marker}{value}</strong>
+      <strong>{marker}<span>{value}</span></strong>
     </article>
   );
 }

@@ -684,7 +684,7 @@ a {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.85fr) minmax(0, 1.05fr) minmax(0, 2.3fr);
   border-bottom: 1px solid var(--line);
 }
 
@@ -734,10 +734,47 @@ a {
   color: white;
 }
 
+.metric-featured strong {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  overflow: visible;
+  white-space: normal;
+  line-height: 1.1;
+}
+
+.metric-featured strong > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metric-featured .standing-marker {
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+}
+
+.metric-accent .standing-marker-leader {
+  color: inherit;
+}
+
 .metric-accent p,
 .metric-accent > span {
-  color: white;
+  color: inherit;
   opacity: 0.8;
+}
+
+:root[data-mode="dark"] .metric-accent,
+:root[data-mode="dark"] .brand-rail,
+:root[data-mode="dark"] .protest-button,
+:root[data-mode="dark"] .language-toggle button.is-active {
+  color: #11110f;
+}
+
+:root[data-mode="dark"] .metric-accent p,
+:root[data-mode="dark"] .metric-accent > span {
+  opacity: 1;
 }
 
 .control-grid {
@@ -1344,12 +1381,20 @@ a {
 
 .color-white {
   background: #fff;
-  border: 1px solid #c8c5bb;
+  border: 1px solid #11110f;
+}
+
+:root[data-mode="dark"] .color-white {
+  border-color: #c8c5bb;
 }
 
 .color-black {
   background: #11110f;
   border: 1px solid #11110f;
+}
+
+:root[data-mode="dark"] .color-black {
+  border-color: #fff;
 }
 
 .pairing-player-line {
@@ -2929,15 +2974,19 @@ a {
   }
 
   .metric-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .metric:nth-child(2) {
+  .metric:nth-child(3) {
     border-right: 0;
   }
 
-  .metric:nth-child(-n + 2) {
+  .metric:nth-child(-n + 3) {
     border-bottom: 1px solid var(--line);
+  }
+
+  .metric-featured {
+    grid-column: 1 / -1;
   }
 
   .control-grid {
@@ -3150,6 +3199,14 @@ a {
 
   .metric-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .metric:nth-child(2) {
+    border-right: 0;
+  }
+
+  .metric:nth-child(3) {
+    grid-column: 1 / -1;
   }
 
   .metric {

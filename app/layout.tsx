@@ -27,6 +27,9 @@ export default function RootLayout({
               try {
                 let theme = localStorage.getItem('freak-swiss-theme');
                 let mode = localStorage.getItem('freak-swiss-mode');
+                if (!mode && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                  mode = 'dark';
+                }
                 if (theme === 'turquoise') document.documentElement.setAttribute('data-theme', 'turquoise');
                 if (mode === 'dark') document.documentElement.setAttribute('data-mode', 'dark');
               } catch (e) {}

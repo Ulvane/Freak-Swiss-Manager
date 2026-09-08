@@ -43,3 +43,6 @@ next-env.d.ts
 /.npm-cache/
 /outputs/
 /work/
+
+Freak-Swiss-Manager-main/
+.directory

@@ -9,9 +9,12 @@ export function ThemeToggles() {
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("freak-swiss-theme") || "red";
-    const savedMode = window.localStorage.getItem("freak-swiss-mode") || "light";
+    const userSavedMode = window.localStorage.getItem("freak-swiss-mode");
+    const systemPrefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const initialMode = userSavedMode || (systemPrefersDark ? "dark" : "light");
+    
     setTheme(savedTheme);
-    setMode(savedMode);
+    setMode(initialMode);
     
     if (savedTheme === "turquoise") {
       document.documentElement.setAttribute("data-theme", "turquoise");
@@ -19,11 +22,26 @@ export function ThemeToggles() {
       document.documentElement.removeAttribute("data-theme");
     }
 
-    if (savedMode === "dark") {
+    if (initialMode === "dark") {
       document.documentElement.setAttribute("data-mode", "dark");
     } else {
       document.documentElement.removeAttribute("data-mode");
     }
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleSystemChange = (e: MediaQueryListEvent) => {
+      if (!window.localStorage.getItem("freak-swiss-mode")) {
+        const nextMode = e.matches ? "dark" : "light";
+        setMode(nextMode);
+        if (nextMode === "dark") {
+          document.documentElement.setAttribute("data-mode", "dark");
+        } else {
+          document.documentElement.removeAttribute("data-mode");
+        }
+      }
+    };
+    mediaQuery.addEventListener("change", handleSystemChange);
+    return () => mediaQuery.removeEventListener("change", handleSystemChange);
   }, []);
 
   const toggleTheme = () => {
