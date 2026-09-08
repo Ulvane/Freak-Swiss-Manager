@@ -53,10 +53,10 @@ test("permission policy keeps organizer delegation local and global administrati
   assert.equal(canCreateOfficialTournament("moderator"), true);
   assert.equal(canCreateOfficialTournament("organizer"), false);
   assert.equal(canGrantGlobalModerator("organizer"), false);
-  assert.equal(canGrantGlobalModerator("moderator"), true);
+  assert.equal(canGrantGlobalModerator("moderator"), false);
   assert.equal(
     canRemoveTournamentModerator({ role: "organizer", ownsTournament: true }),
-    true,
+    false,
   );
   assert.equal(
     canRemoveTournamentModerator({ role: "organizer", ownsTournament: false }),
@@ -65,7 +65,8 @@ test("permission policy keeps organizer delegation local and global administrati
   assert.equal(creationVisibility("organizer", "official"), "community");
   assert.match(route, /t\.owner_email = \? OR tm\.id IS NOT NULL/);
   assert.match(route, /if \(!isSuperadmin\(email\)\)[\s\S]*Superadmin access required/);
-  assert.match(route, /if \(canGrantGlobalModerator\(issuerRole\)\)/);
+  assert.match(route, /if \(!isSuperadmin\(email\)\)[\s\S]*Superadmin access required/);
+  assert.match(route, /moderator_token_targets/);
 });
 
 test("withdrawal persists its starting round without deleting historical pairings", async () => {

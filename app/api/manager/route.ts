@@ -36,7 +36,9 @@ import {
 import { isEnterableResult } from "@/lib/result-workflow";
 import type {
   AccountSummary,
+  GuestSummary,
   ManagerPayload,
+  ModerationAuditSummary,
   ModeratorSummary,
   ModeratorTokenSummary,
   Pairing,
@@ -170,6 +172,11 @@ async function tournamentControlRole(
   email: string,
 ): Promise<"superadmin" | "moderator" | "organizer" | null> {
   if (isSuperadmin(email)) return "superadmin";
+  const globalModerator = await getDatabase()
+    .prepare(`SELECT email FROM moderators WHERE email = ?`)
+    .bind(normalizeEmail(email))
+    .first<{ email: string }>();
+  if (globalModerator) return "moderator";
   const assignment = await getDatabase()
     .prepare(
       `SELECT t.owner_email AS ownerEmail, tm.id AS moderatorAssignment
@@ -398,11 +405,10 @@ async function loadSnapshot(
     canEdit,
     canDeleteTournament: isSuperadmin(viewerEmail),
     canDeleteRound: canEdit && Number(tournament.currentRound) > 0,
-    canInviteModerators: canEdit,
+    canInviteModerators: Boolean(viewerEmail && isSuperadmin(viewerEmail)),
     canRemoveModerators: Boolean(
       viewerEmail &&
-        (isSuperadmin(viewerEmail) ||
-          normalizeEmail(tournament.ownerEmail) === normalizeEmail(viewerEmail)),
+        isSuperadmin(viewerEmail),
     ),
     canManageCheckIn: canEdit && Number(tournament.currentRound) === 0,
     canChangeVisibility: Boolean(
@@ -426,17 +432,23 @@ async function loadSnapshot(
 
 async function loadAdminDirectory() {
   const database = getDatabase();
-  const [accountRows, moderatorRows, tokenRows] = await Promise.all([
+  const [accountRows, moderatorRows, tokenRows, guestRows, auditRows] = await Promise.all([
     database
       .prepare(
         `SELECT ua.email, ua.display_name AS displayName, ua.created_at AS createdAt,
                 ua.last_seen_at AS lastSeenAt,
-                CASE WHEN m.email IS NULL THEN 0 ELSE 1 END AS isModerator
+                CASE WHEN m.email IS NULL THEN 0 ELSE 1 END AS isModerator,
+                CASE WHEN ma.status = 'banned' THEN 1 ELSE 0 END AS isBanned,
+                ma.ban_reason AS banReason
          FROM user_accounts ua
          LEFT JOIN moderators m ON m.email = ua.email
+         LEFT JOIN moderation_accounts ma ON ma.email = ua.email
          ORDER BY ua.last_seen_at DESC`,
       )
-      .all<Omit<AccountSummary, "isModerator"> & { isModerator: number | boolean }>(),
+      .all<Omit<AccountSummary, "isModerator" | "isSuperadmin" | "isBanned"> & {
+        isModerator: number | boolean;
+        isBanned: number | boolean;
+      }>(),
     database
       .prepare(
         `SELECT m.email, m.display_name AS displayName, m.created_at AS createdAt,
@@ -448,8 +460,10 @@ async function loadAdminDirectory() {
       .all<ModeratorSummary>(),
     database
       .prepare(
-        `SELECT mt.id, mt.token_hint AS tokenHint,
+         `SELECT mt.id, mt.token_hint AS tokenHint,
                 mt.tournament_id AS tournamentId, t.name AS tournamentName,
+                target.target_email AS targetEmail,
+                targetAccount.display_name AS targetName,
                 mt.created_by_email AS createdByEmail,
                 creator.display_name AS createdByName,
                 mt.used_by_email AS usedByEmail,
@@ -459,23 +473,101 @@ async function loadAdminDirectory() {
                 mt.expires_at AS expiresAt, mt.created_at AS createdAt
          FROM moderator_tokens mt
          LEFT JOIN tournaments t ON t.id = mt.tournament_id
+         LEFT JOIN moderator_token_targets target ON target.token_id = mt.id
+         LEFT JOIN user_accounts targetAccount ON targetAccount.email = target.target_email
          LEFT JOIN user_accounts creator ON creator.email = mt.created_by_email
          LEFT JOIN user_accounts redeemer ON redeemer.email = mt.used_by_email
          ORDER BY mt.created_at DESC
          LIMIT 200`,
       )
       .all<ModeratorTokenSummary>(),
+    database
+      .prepare(
+        `SELECT p.id AS playerId, p.tournament_id AS tournamentId,
+                t.name AS tournamentName, p.name, p.fide_id AS fideId,
+                p.rating, p.withdrawn, p.guest_expires_at AS guestExpiresAt,
+                COALESCE(gt.token_hint, substr(p.guest_token_hash, 1, 8)) AS guestTokenHint,
+                p.created_at AS createdAt
+         FROM players p
+         JOIN tournaments t ON t.id = p.tournament_id
+         LEFT JOIN guest_tokens gt ON gt.player_id = p.id
+         WHERE p.account_email IS NULL
+         ORDER BY p.created_at DESC
+         LIMIT 500`,
+      )
+      .all<GuestSummary & { withdrawn: number | boolean; rating: number }>(),
+    database
+      .prepare(
+        `SELECT log.id, log.actor_email AS actorEmail,
+                actor.display_name AS actorName, log.action,
+                log.target_email AS targetEmail,
+                target.display_name AS targetName,
+                log.tournament_id AS tournamentId,
+                tournament.name AS tournamentName,
+                log.detail, log.created_at AS createdAt
+         FROM moderation_audit_log log
+         LEFT JOIN user_accounts actor ON actor.email = log.actor_email
+         LEFT JOIN user_accounts target ON target.email = log.target_email
+         LEFT JOIN tournaments tournament ON tournament.id = log.tournament_id
+         ORDER BY log.created_at DESC
+         LIMIT 200`,
+      )
+      .all<ModerationAuditSummary>(),
   ]);
   return {
     accounts: ((accountRows.results ?? []) as Array<
-      Omit<AccountSummary, "isModerator"> & { isModerator: number | boolean }
-    >).map((row) => ({ ...row, isModerator: Boolean(row.isModerator) })),
+      Omit<AccountSummary, "isModerator" | "isSuperadmin" | "isBanned"> & {
+        isModerator: number | boolean;
+        isBanned: number | boolean;
+      }
+    >).map((row) => ({
+      ...row,
+      isModerator: Boolean(row.isModerator),
+      isSuperadmin: isSuperadmin(row.email),
+      isBanned: Boolean(row.isBanned),
+    })),
     moderators: ((moderatorRows.results ?? []) as ModeratorSummary[]).map((row) => ({
       ...row,
       tournamentCount: Number(row.tournamentCount),
     })),
     moderatorTokens: (tokenRows.results ?? []) as ModeratorTokenSummary[],
+    guests: ((guestRows.results ?? []) as Array<GuestSummary & { withdrawn: number | boolean }>).map(
+      (row) => ({ ...row, rating: Number(row.rating), withdrawn: Boolean(row.withdrawn) }),
+    ),
+    moderationAuditLog: (auditRows.results ?? []) as ModerationAuditSummary[],
   };
+}
+
+async function loadPublicStaff() {
+  const database = getDatabase();
+  const configuredSuperadmin = (process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
+  const [superadminRows, moderatorRows] = await Promise.all([
+    database
+      .prepare(
+        `SELECT display_name AS displayName FROM user_accounts WHERE email = ?`,
+      )
+      .bind(configuredSuperadmin)
+      .all<{ displayName: string }>(),
+    database
+      .prepare(
+        `SELECT display_name AS displayName FROM moderators ORDER BY display_name COLLATE NOCASE`,
+      )
+      .all<{ displayName: string }>(),
+  ]);
+  const superadminStaff = ((superadminRows.results ?? []) as Array<{ displayName: string }>).map((row) => ({
+      displayName: row.displayName,
+      role: "superadmin" as const,
+    }));
+  if (!superadminStaff.length && configuredSuperadmin) {
+    superadminStaff.push({ displayName: "Superadmin", role: "superadmin" });
+  }
+  return [
+    ...superadminStaff,
+    ...((moderatorRows.results ?? []) as Array<{ displayName: string }>).map((row) => ({
+      displayName: row.displayName,
+      role: "moderator" as const,
+    })),
+  ];
 }
 
 async function loadManagerPayload(request: Request, tournamentId?: string | null) {
@@ -490,15 +582,16 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
   let tournaments: TournamentSummary[] = [];
 
   if (viewerEmail) {
-    const rows = isSuperadmin(viewerEmail)
+    const rows = viewerGlobalRole === "superadmin" || viewerGlobalRole === "moderator"
       ? await database
           .prepare(
             `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(roster.id) AS playerCount,
-                    'superadmin' AS role
+                    ? AS role
              FROM tournaments t
              LEFT JOIN players roster ON roster.tournament_id = t.id
              GROUP BY t.id ORDER BY t.created_at DESC`,
           )
+          .bind(viewerGlobalRole)
           .all<RawTournamentSummary>()
       : await database
           .prepare(
@@ -606,7 +699,23 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
     : null;
   const directory = isSuperadmin(viewerEmail) && !selectedId
     ? await loadAdminDirectory()
-    : { accounts: [], moderators: [], moderatorTokens: [] };
+    : { accounts: [], moderators: [], moderatorTokens: [], guests: [], moderationAuditLog: [] };
+  const publicStaff = await loadPublicStaff();
+  const canRedeemModeratorToken = Boolean(
+    viewerEmail &&
+      viewerGlobalRole === "organizer" &&
+      (await database
+        .prepare(
+          `SELECT mt.id
+           FROM moderator_tokens mt
+           JOIN moderator_token_targets target ON target.token_id = mt.id
+           WHERE target.target_email = ? AND mt.used_at IS NULL
+             AND mt.revoked_at IS NULL AND mt.expires_at > ?
+           LIMIT 1`,
+        )
+        .bind(viewerEmail, new Date().toISOString())
+        .first<{ id: string }>()) !== null,
+  );
 
   const payload: ManagerPayload = {
     serverTime: new Date().toISOString(),
@@ -623,6 +732,10 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
     accounts: directory.accounts,
     moderators: directory.moderators,
     moderatorTokens: directory.moderatorTokens,
+    guests: directory.guests,
+    moderationAuditLog: directory.moderationAuditLog,
+    publicStaff,
+    canRedeemModeratorToken,
   };
   return payload;
 }
@@ -705,12 +818,19 @@ type ManagerAction =
       pairingId?: string;
       result?: ResultCode;
     }
-  | { action: "create_moderator_token"; tournamentId?: string }
+  | { action: "create_moderator_token"; targetEmail?: string }
   | { action: "redeem_moderator_token"; token?: string }
   | { action: "revoke_moderator_token"; tokenId?: string }
   | { action: "delete_moderator_token"; tokenId?: string }
   | { action: "remove_tournament_moderator"; tournamentId?: string; email?: string }
+  | { action: "grant_moderator"; email?: string }
+  | { action: "revoke_moderator"; email?: string }
   | { action: "delete_moderator"; email?: string }
+  | { action: "set_account_banned"; email?: string; banned?: boolean; reason?: string }
+  | { action: "revoke_account_sessions"; email?: string }
+  | { action: "kick_guest"; tournamentId?: string; playerId?: string }
+  | { action: "revoke_guest_access"; tournamentId?: string; playerId?: string }
+  | { action: "delete_guest"; tournamentId?: string; playerId?: string }
   | { action: "delete_account"; email?: string };
 
 export async function POST(request: Request) {
@@ -918,23 +1038,36 @@ export async function POST(request: Request) {
       const hash = await digestToken(compact);
       const token = await database
         .prepare(
-          `SELECT id, tournament_id AS tournamentId,
-                  created_by_email AS createdByEmail
-           FROM moderator_tokens
-           WHERE token_hash = ? AND tournament_id IS NOT NULL
-             AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+          `SELECT mt.id, mt.tournament_id AS tournamentId,
+                  mt.created_by_email AS createdByEmail,
+                  target.target_email AS targetEmail
+           FROM moderator_tokens mt
+           JOIN moderator_token_targets target ON target.token_id = mt.id
+           WHERE mt.token_hash = ?
+             AND mt.used_at IS NULL AND mt.revoked_at IS NULL AND mt.expires_at > ?`,
         )
         .bind(hash, new Date().toISOString())
         .first<{
           id: string;
           tournamentId: string | null;
           createdByEmail: string;
+          targetEmail: string;
         }>();
       if (!token) {
         return Response.json(
           { error: "This moderator token is invalid, expired, or already used." },
           { status: 409 },
         );
+      }
+
+      if (normalizeEmail(token.targetEmail) !== email) {
+        return Response.json(
+          { error: "This moderator token is assigned to a different registered account." },
+          { status: 403 },
+        );
+      }
+      if (!isSuperadmin(token.createdByEmail)) {
+        return Response.json({ error: "Only the superadmin can issue moderator access." }, { status: 403 });
       }
 
       const now = new Date().toISOString();
@@ -950,9 +1083,8 @@ export async function POST(request: Request) {
         return Response.json({ error: "This token was already used." }, { status: 409 });
       }
 
-      const issuerRole = await getGlobalRole(token.createdByEmail);
       const writes: D1PreparedStatement[] = [];
-      if (canGrantGlobalModerator(issuerRole)) {
+      if (canGrantGlobalModerator(isSuperadmin(token.createdByEmail) ? "superadmin" : "organizer")) {
         writes.push(
           database
             .prepare(
@@ -980,26 +1112,60 @@ export async function POST(request: Request) {
             ),
         );
       }
+      writes.push(
+        database
+          .prepare(
+            `INSERT INTO moderation_audit_log
+               (id, actor_email, action, target_email, tournament_id, detail, created_at)
+             VALUES (?, ?, 'grant_moderator', ?, ?, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            token.createdByEmail,
+            email,
+            token.tournamentId,
+            "redeemed moderator invitation",
+            now,
+          ),
+      );
       await database.batch(writes);
       return Response.json({ ok: true, tournamentId: token.tournamentId });
     }
 
     if (body.action === "create_moderator_token") {
-      const tournamentId = cleanText(body.tournamentId, 80);
-      if (!tournamentId) {
-        return Response.json(
-          { error: "Choose the tournament this moderator will control." },
-          { status: 400 },
-        );
+      if (!isSuperadmin(email)) {
+        return Response.json({ error: "Superadmin access required." }, { status: 403 });
       }
-      if (!(await canControlTournament(tournamentId, email))) {
-        return Response.json(
-          { error: "You can only invite moderators to a tournament you control." },
-          { status: 403 },
-        );
+      const targetEmail = normalizeEmail(cleanText(body.targetEmail, 254));
+      if (!targetEmail || targetEmail === email) {
+        return Response.json({ error: "Choose a registered account other than the superadmin." }, { status: 400 });
+      }
+      const target = await database
+        .prepare(
+          `SELECT ua.email, COALESCE(ma.status, 'active') AS status
+           FROM user_accounts ua
+           JOIN auth_credentials ac ON ac.email = ua.email
+           LEFT JOIN moderation_accounts ma ON ma.email = ua.email
+           WHERE ua.email = ?`,
+        )
+        .bind(targetEmail)
+        .first<{ email: string; status: string }>();
+      if (!target) {
+        return Response.json({ error: "Only registered accounts can become moderators." }, { status: 404 });
+      }
+      if (target.status === "banned") {
+        return Response.json({ error: "Unban the account before creating a moderator invitation." }, { status: 409 });
+      }
+      const existingModerator = await database
+        .prepare(`SELECT email FROM moderators WHERE email = ?`)
+        .bind(targetEmail)
+        .first<{ email: string }>();
+      if (existingModerator) {
+        return Response.json({ error: "This account is already a moderator." }, { status: 409 });
       }
 
       const token = await uniqueModeratorToken();
+      const tokenId = crypto.randomUUID();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       await database
@@ -1010,18 +1176,30 @@ export async function POST(request: Request) {
            VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
         )
         .bind(
-          crypto.randomUUID(),
+          tokenId,
           token.hash,
           `MOD-••••-••••-${token.value.slice(-4)}`,
-          tournamentId,
+          null,
           email,
           expiresAt.toISOString(),
           now.toISOString(),
         )
         .run();
+      await database.batch([
+        database
+          .prepare(`INSERT INTO moderator_token_targets (token_id, target_email) VALUES (?, ?)`)
+          .bind(tokenId, targetEmail),
+        database
+          .prepare(
+            `INSERT INTO moderation_audit_log
+               (id, actor_email, action, target_email, detail, created_at)
+             VALUES (?, ?, 'create_moderator_token', ?, ?, ?)`,
+          )
+          .bind(crypto.randomUUID(), email, targetEmail, "seven-day moderator invitation", now.toISOString()),
+      ]);
       return Response.json({
         ok: true,
-        tournamentId,
+        targetEmail,
         moderatorToken: token.value,
         expiresAt: expiresAt.toISOString(),
       });
@@ -1050,6 +1228,14 @@ export async function POST(request: Request) {
           { status: 409 },
         );
       }
+      await database
+        .prepare(
+          `INSERT INTO moderation_audit_log
+             (id, actor_email, action, detail, created_at)
+           VALUES (?, ?, 'revoke_moderator_token', ?, ?)`,
+        )
+        .bind(crypto.randomUUID(), email, `token ${tokenId}`, revokedAt)
+        .run();
       return Response.json({ ok: true });
     }
 
@@ -1061,17 +1247,80 @@ export async function POST(request: Request) {
       if (!tokenId) {
         return Response.json({ error: "Choose a moderator token." }, { status: 400 });
       }
-      const result = await database
-        .prepare(`DELETE FROM moderator_tokens WHERE id = ?`)
+      const tokenRecord = await database
+        .prepare(
+          `SELECT target.target_email AS targetEmail
+           FROM moderator_tokens mt
+           LEFT JOIN moderator_token_targets target ON target.token_id = mt.id
+           WHERE mt.id = ?`,
+        )
         .bind(tokenId)
-        .run();
+        .first<{ targetEmail: string | null }>();
+      if (!tokenRecord) {
+        return Response.json({ error: "Moderator token not found." }, { status: 404 });
+      }
+      const now = new Date().toISOString();
+      const [result] = await database.batch([
+        database.prepare(`DELETE FROM moderator_tokens WHERE id = ?`).bind(tokenId),
+        database
+          .prepare(
+            `INSERT INTO moderation_audit_log
+               (id, actor_email, action, target_email, detail, created_at)
+             VALUES (?, ?, 'delete_moderator_token', ?, ?, ?)`,
+          )
+          .bind(crypto.randomUUID(), email, tokenRecord.targetEmail, `token ${tokenId}`, now),
+      ]);
       if (Number(result.meta?.changes ?? 0) !== 1) {
         return Response.json({ error: "Moderator token not found." }, { status: 404 });
       }
       return Response.json({ ok: true });
     }
 
-    if (body.action === "delete_moderator") {
+    if (body.action === "grant_moderator") {
+      if (!isSuperadmin(email)) {
+        return Response.json({ error: "Superadmin access required." }, { status: 403 });
+      }
+      const target = normalizeEmail(cleanText(body.email, 254));
+      if (!target || isSuperadmin(target)) {
+        return Response.json({ error: "Choose a registered account other than the superadmin." }, { status: 400 });
+      }
+      const account = await database
+        .prepare(
+          `SELECT ua.display_name AS displayName, COALESCE(ma.status, 'active') AS status
+           FROM user_accounts ua
+           JOIN auth_credentials ac ON ac.email = ua.email
+           LEFT JOIN moderation_accounts ma ON ma.email = ua.email
+           WHERE ua.email = ?`,
+        )
+        .bind(target)
+        .first<{ displayName: string; status: string }>();
+      if (!account) {
+        return Response.json({ error: "Only registered accounts can become moderators." }, { status: 404 });
+      }
+      if (account.status === "banned") {
+        return Response.json({ error: "Unban the account before granting moderator access." }, { status: 409 });
+      }
+      const now = new Date().toISOString();
+      await database.batch([
+        database
+          .prepare(
+            `INSERT INTO moderators (email, display_name, created_by_email, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(email) DO UPDATE SET display_name = excluded.display_name`,
+          )
+          .bind(target, account.displayName, email, now),
+        database
+          .prepare(
+            `INSERT INTO moderation_audit_log
+               (id, actor_email, action, target_email, detail, created_at)
+             VALUES (?, ?, 'grant_moderator', ?, 'direct grant', ?)`,
+          )
+          .bind(crypto.randomUUID(), email, target, now),
+      ]);
+      return Response.json({ ok: true });
+    }
+
+    if (body.action === "revoke_moderator" || body.action === "delete_moderator") {
       if (!isSuperadmin(email)) {
         return Response.json({ error: "Superadmin access required." }, { status: 403 });
       }
@@ -1084,7 +1333,85 @@ export async function POST(request: Request) {
         database
           .prepare(`DELETE FROM moderator_tokens WHERE created_by_email = ? OR used_by_email = ?`)
           .bind(target, target),
+        database.prepare(`DELETE FROM moderator_token_targets WHERE target_email = ?`).bind(target),
         database.prepare(`DELETE FROM moderators WHERE email = ?`).bind(target),
+        database
+          .prepare(
+            `INSERT INTO moderation_audit_log
+               (id, actor_email, action, target_email, detail, created_at)
+             VALUES (?, ?, 'revoke_moderator', ?, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            email,
+            target,
+            body.action === "delete_moderator" ? "deleted moderator record" : "revoked moderator access",
+            new Date().toISOString(),
+          ),
+      ]);
+      return Response.json({ ok: true });
+    }
+
+    if (body.action === "set_account_banned") {
+      if (!isSuperadmin(email)) {
+        return Response.json({ error: "Superadmin access required." }, { status: 403 });
+      }
+      const target = normalizeEmail(cleanText(body.email, 254));
+      if (!target || isSuperadmin(target)) {
+        return Response.json({ error: "The superadmin account cannot be banned." }, { status: 400 });
+      }
+      const account = await database
+        .prepare(`SELECT email FROM user_accounts WHERE email = ?`)
+        .bind(target)
+        .first<{ email: string }>();
+      if (!account) return Response.json({ error: "Account not found." }, { status: 404 });
+      const banned = Boolean(body.banned);
+      const now = new Date().toISOString();
+      await database.batch([
+        database
+          .prepare(
+            `INSERT INTO moderation_accounts (email, status, banned_at, banned_by_email, ban_reason)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(email) DO UPDATE SET
+               status = excluded.status, banned_at = excluded.banned_at,
+               banned_by_email = excluded.banned_by_email, ban_reason = excluded.ban_reason`,
+          )
+          .bind(target, banned ? "banned" : "active", banned ? now : null, banned ? email : null, banned ? cleanText(body.reason, 240) || null : null),
+        ...(banned
+          ? [
+              database.prepare(`DELETE FROM moderators WHERE email = ?`).bind(target),
+              database.prepare(`DELETE FROM tournament_moderators WHERE moderator_email = ?`).bind(target),
+              database.prepare(`DELETE FROM auth_sessions WHERE email = ?`).bind(target),
+            ]
+          : []),
+        database
+          .prepare(
+            `INSERT INTO moderation_audit_log
+               (id, actor_email, action, target_email, detail, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(crypto.randomUUID(), email, banned ? "ban_account" : "unban_account", target, cleanText(body.reason, 240) || null, now),
+      ]);
+      return Response.json({ ok: true });
+    }
+
+    if (body.action === "revoke_account_sessions") {
+      if (!isSuperadmin(email)) {
+        return Response.json({ error: "Superadmin access required." }, { status: 403 });
+      }
+      const target = normalizeEmail(cleanText(body.email, 254));
+      if (!target || isSuperadmin(target)) {
+        return Response.json({ error: "The superadmin session cannot be revoked here." }, { status: 400 });
+      }
+      await database.batch([
+        database.prepare(`DELETE FROM auth_sessions WHERE email = ?`).bind(target),
+        database
+          .prepare(
+            `INSERT INTO moderation_audit_log
+               (id, actor_email, action, target_email, detail, created_at)
+             VALUES (?, ?, 'revoke_sessions', ?, 'all account sessions revoked', ?)`,
+          )
+          .bind(crypto.randomUUID(), email, target, new Date().toISOString()),
       ]);
       return Response.json({ ok: true });
     }
@@ -1113,15 +1440,27 @@ export async function POST(request: Request) {
         database
           .prepare(`DELETE FROM moderator_tokens WHERE created_by_email = ? OR used_by_email = ?`)
           .bind(target, target),
+        database.prepare(`DELETE FROM moderator_token_targets WHERE target_email = ?`).bind(target),
         database.prepare(`DELETE FROM moderators WHERE email = ?`).bind(target),
+        database.prepare(`DELETE FROM moderation_accounts WHERE email = ?`).bind(target),
         database.prepare(`DELETE FROM auth_sessions WHERE email = ?`).bind(target),
         database.prepare(`DELETE FROM auth_credentials WHERE email = ?`).bind(target),
         database.prepare(`DELETE FROM user_accounts WHERE email = ?`).bind(target),
+        database
+          .prepare(
+            `INSERT INTO moderation_audit_log
+               (id, actor_email, action, target_email, detail, created_at)
+             VALUES (?, ?, 'delete_account', ?, 'account permanently deleted', ?)`,
+          )
+          .bind(crypto.randomUUID(), email, target, new Date().toISOString()),
       ]);
       return Response.json({ ok: true });
     }
 
     if (body.action === "remove_tournament_moderator") {
+      if (!isSuperadmin(email)) {
+        return Response.json({ error: "Superadmin access required." }, { status: 403 });
+      }
       const tournamentId = cleanText(body.tournamentId, 80);
       const target = normalizeEmail(cleanText(body.email, 254));
       const ownedTournament = await database
@@ -1133,7 +1472,7 @@ export async function POST(request: Request) {
         ownsTournament: normalizeEmail(ownedTournament.ownerEmail) === email,
       })) {
         return Response.json(
-          { error: "Only the tournament owner or superadmin can remove moderators." },
+          { error: "Superadmin access required." },
           { status: 403 },
         );
       }
@@ -1228,6 +1567,80 @@ export async function POST(request: Request) {
         ...pairingInsertStatements(database, id, roundId, 1, generated),
       ]);
       return Response.json({ ok: true, tournamentId: id }, { status: 201 });
+    }
+
+    if (
+      body.action === "kick_guest" ||
+      body.action === "revoke_guest_access" ||
+      body.action === "delete_guest"
+    ) {
+      if (!isSuperadmin(email)) {
+        return Response.json({ error: "Superadmin access required." }, { status: 403 });
+      }
+      const guestTournamentId = cleanText(body.tournamentId, 80);
+      const guestPlayerId = cleanText(body.playerId, 80);
+      const guest = await database
+        .prepare(
+          `SELECT p.id, p.tournament_id AS tournamentId, t.current_round AS currentRound
+           FROM players p JOIN tournaments t ON t.id = p.tournament_id
+           WHERE p.id = ? AND p.tournament_id = ? AND p.account_email IS NULL`,
+        )
+        .bind(guestPlayerId, guestTournamentId)
+        .first<{ id: string; tournamentId: string; currentRound: number }>();
+      if (!guest) return Response.json({ error: "Guest entry not found." }, { status: 404 });
+      if (body.action === "delete_guest" && Number(guest.currentRound) > 0) {
+        return Response.json({ error: "After pairing starts, kick the guest instead of deleting history." }, { status: 409 });
+      }
+      const now = new Date().toISOString();
+      if (body.action === "revoke_guest_access") {
+        await database.batch([
+          database.prepare(`DELETE FROM player_sessions WHERE player_id = ?`).bind(guestPlayerId),
+          database.prepare(`DELETE FROM guest_tokens WHERE player_id = ?`).bind(guestPlayerId),
+          database.prepare(`UPDATE players SET guest_token_hash = NULL WHERE id = ?`).bind(guestPlayerId),
+          database
+            .prepare(
+              `INSERT INTO moderation_audit_log
+                 (id, actor_email, action, tournament_id, detail, created_at)
+               VALUES (?, ?, 'revoke_guest_access', ?, ?, ?)`,
+            )
+            .bind(crypto.randomUUID(), email, guestTournamentId, `guest ${guestPlayerId}`, now),
+        ]);
+      } else if (body.action === "kick_guest") {
+        await database.batch([
+          database
+            .prepare(
+              `UPDATE players SET withdrawn = 1, checked_in = 0,
+                 withdrawn_from_round = COALESCE(withdrawn_from_round, ?)
+               WHERE id = ? AND tournament_id = ?`,
+            )
+            .bind(Number(guest.currentRound) + 1, guestPlayerId, guestTournamentId),
+          database
+            .prepare(`DELETE FROM player_round_statuses WHERE tournament_id = ? AND player_id = ? AND round_number > ?`)
+            .bind(guestTournamentId, guestPlayerId, Number(guest.currentRound)),
+          database.prepare(`DELETE FROM player_sessions WHERE player_id = ?`).bind(guestPlayerId),
+          database.prepare(`DELETE FROM guest_tokens WHERE player_id = ?`).bind(guestPlayerId),
+          database.prepare(`UPDATE players SET guest_token_hash = NULL WHERE id = ?`).bind(guestPlayerId),
+          database
+            .prepare(
+              `INSERT INTO moderation_audit_log
+                 (id, actor_email, action, tournament_id, detail, created_at)
+               VALUES (?, ?, 'kick_guest', ?, ?, ?)`,
+            )
+            .bind(crypto.randomUUID(), email, guestTournamentId, `guest ${guestPlayerId}`, now),
+        ]);
+      } else {
+        await database.batch([
+          database.prepare(`DELETE FROM players WHERE id = ? AND tournament_id = ?`).bind(guestPlayerId, guestTournamentId),
+          database
+            .prepare(
+              `INSERT INTO moderation_audit_log
+                 (id, actor_email, action, tournament_id, detail, created_at)
+               VALUES (?, ?, 'delete_guest', ?, ?, ?)`,
+            )
+            .bind(crypto.randomUUID(), email, guestTournamentId, `guest ${guestPlayerId}`, now),
+        ]);
+      }
+      return Response.json({ ok: true });
     }
 
     const tournamentId = cleanText(body.tournamentId, 80);

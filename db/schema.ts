@@ -182,6 +182,50 @@ export const moderatorTokens = sqliteTable(
   ],
 );
 
+export const moderatorTokenTargets = sqliteTable(
+  "moderator_token_targets",
+  {
+    tokenId: text("token_id")
+      .primaryKey()
+      .references(() => moderatorTokens.id, { onDelete: "cascade" }),
+    targetEmail: text("target_email")
+      .notNull()
+      .references(() => userAccounts.email, { onDelete: "cascade" }),
+  },
+  (table) => [index("moderator_token_targets_email_idx").on(table.targetEmail)],
+);
+
+export const moderationAccounts = sqliteTable(
+  "moderation_accounts",
+  {
+    email: text("email")
+      .primaryKey()
+      .references(() => userAccounts.email, { onDelete: "cascade" }),
+    status: text("status").notNull().default("active"),
+    bannedAt: text("banned_at"),
+    bannedByEmail: text("banned_by_email"),
+    banReason: text("ban_reason"),
+  },
+  (table) => [index("moderation_accounts_status_idx").on(table.status)],
+);
+
+export const moderationAuditLog = sqliteTable(
+  "moderation_audit_log",
+  {
+    id: text("id").primaryKey(),
+    actorEmail: text("actor_email").notNull(),
+    action: text("action").notNull(),
+    targetEmail: text("target_email"),
+    tournamentId: text("tournament_id"),
+    detail: text("detail"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("moderation_audit_log_created_idx").on(table.createdAt),
+    index("moderation_audit_log_target_idx").on(table.targetEmail),
+  ],
+);
+
 export const guestTokens = sqliteTable(
   "guest_tokens",
   {

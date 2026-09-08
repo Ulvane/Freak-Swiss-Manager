@@ -7,7 +7,7 @@ export function canCreateOfficialTournament(role: GlobalRole) {
 }
 
 export function canGrantGlobalModerator(role: GlobalRole) {
-  return role === "superadmin" || role === "moderator";
+  return role === "superadmin";
 }
 
 export function canRemoveTournamentModerator({
@@ -17,7 +17,8 @@ export function canRemoveTournamentModerator({
   role: GlobalRole;
   ownsTournament: boolean;
 }) {
-  return role === "superadmin" || ownsTournament;
+  void ownsTournament;
+  return role === "superadmin";
 }
 
 export function isTournamentVisibility(

@@ -31,6 +31,11 @@ export async function POST(request: Request) {
     if (!credential) return invalidLogin();
 
     const now = new Date();
+    const moderation = await getDatabase()
+      .prepare(`SELECT status FROM moderation_accounts WHERE email = ?`)
+      .bind(email)
+      .first<{ status: string }>();
+    if (moderation?.status === "banned") return invalidLogin();
     if (credential.lockedUntil && credential.lockedUntil > now.toISOString()) {
       return Response.json(
         { error: "Too many attempts. Try again in 15 minutes." },

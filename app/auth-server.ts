@@ -132,7 +132,9 @@ export async function getAuthenticatedUser(): Promise<AppUser | null> {
       `SELECT ua.email, ua.display_name AS displayName
        FROM auth_sessions session
        JOIN user_accounts ua ON ua.email = session.email
-       WHERE session.token_hash = ? AND session.expires_at > ?`,
+       LEFT JOIN moderation_accounts ma ON ma.email = ua.email
+       WHERE session.token_hash = ? AND session.expires_at > ?
+         AND COALESCE(ma.status, 'active') = 'active'`,
     )
     .bind(await sha256(rawToken), new Date().toISOString())
     .first<AppUser>();

@@ -19,7 +19,6 @@ import {
   RefreshCw,
   Settings2,
   ShieldCheck,
-  ShieldPlus,
   Trash2,
   Trophy,
   Undo2,
@@ -109,6 +108,10 @@ const emptyPayload: ManagerPayload = {
   accounts: [],
   moderators: [],
   moderatorTokens: [],
+  guests: [],
+  moderationAuditLog: [],
+  publicStaff: [],
+  canRedeemModeratorToken: false,
 };
 
 function score(value: number) {
@@ -148,6 +151,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   const [moderatorTokenInput, setModeratorTokenInput] = useState("");
   const [moderatorInviteOpen, setModeratorInviteOpen] = useState(false);
   const [issuedModeratorToken, setIssuedModeratorToken] = useState<string | null>(null);
+  const [issuedModeratorTargetEmail, setIssuedModeratorTargetEmail] = useState<string | null>(null);
   const [joinTargetName, setJoinTargetName] = useState<string | null>(null);
   const [managePlayerId, setManagePlayerId] = useState<string | null>(null);
   const [roundView, setRoundView] = useState<{
@@ -494,24 +498,27 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     }
   }
 
-  async function issueModeratorToken(tournamentId?: string) {
+  async function issueModeratorToken(targetEmail: string) {
     setWorking(true);
     try {
       const response = await fetch("/api/manager", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "create_moderator_token", tournamentId }),
+        body: JSON.stringify({ action: "create_moderator_token", targetEmail }),
       });
       const data = (await response.json()) as { error?: string; moderatorToken?: string };
       if (!response.ok || !data.moderatorToken) {
         throw new Error(data.error || "Unable to create moderator token");
       }
       setIssuedModeratorToken(data.moderatorToken);
+      setIssuedModeratorTargetEmail(targetEmail);
       setModeratorInviteOpen(true);
-      await load(tournamentId);
+      await load();
       toast.success("Single-use moderator token created");
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to create token");
+      return false;
     } finally {
       setWorking(false);
     }
@@ -642,11 +649,39 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
             onOpenTournament={chooseTournament}
             onJoinTournament={openJoinDialog}
             onRedeemModerator={() => setModeratorRedeemOpen(true)}
+            onCreateModeratorToken={(targetEmail) => issueModeratorToken(targetEmail)}
             onDeleteModerator={(email) =>
-              mutate({ action: "delete_moderator", email }, "Moderator removed")
+              mutate({ action: "revoke_moderator", email }, "Moderator access revoked")
             }
             onDeleteAccount={(email) =>
               mutate({ action: "delete_account", email }, "Account deleted")
+            }
+            onBanAccount={(email, banned) =>
+              mutate(
+                { action: "set_account_banned", email, banned },
+                banned ? "Account banned" : "Account unbanned",
+              )
+            }
+            onRevokeSessions={(email) =>
+              mutate({ action: "revoke_account_sessions", email }, "Account sessions revoked")
+            }
+            onKickGuest={(guest) =>
+              mutate(
+                { action: "kick_guest", tournamentId: guest.tournamentId, playerId: guest.playerId },
+                `${guest.name} kicked from tournament`,
+              )
+            }
+            onRevokeGuestAccess={(guest) =>
+              mutate(
+                { action: "revoke_guest_access", tournamentId: guest.tournamentId, playerId: guest.playerId },
+                `${guest.name}'s guest access revoked`,
+              )
+            }
+            onDeleteGuest={(guest) =>
+              mutate(
+                { action: "delete_guest", tournamentId: guest.tournamentId, playerId: guest.playerId },
+                `${guest.name} deleted`,
+              )
             }
             onRevokeModeratorToken={(tokenId) =>
               mutate({ action: "revoke_moderator_token", tokenId }, "Moderator token revoked")
@@ -858,15 +893,6 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                   >
                     {tournament?.registrationOpen ? "Close" : "Open"}
                   </Button>
-                  {snapshot.canInviteModerators && (
-                    <Button
-                      variant="outline"
-                      disabled={working}
-                      onClick={() => void issueModeratorToken(tournament?.id)}
-                    >
-                      <ShieldPlus /> Add moderator
-                    </Button>
-                  )}
                 </div>
               </section>
             ) : snapshot.viewerRole === "player" ? (
@@ -953,7 +979,9 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                 <div>
                   <span className="section-code">TOURNAMENT MODERATORS</span>
                   <strong>
-                    {snapshot.moderators.length
+                    {snapshot.viewerRole === "moderator"
+                      ? "Global moderator access"
+                      : snapshot.moderators.length
                       ? `${snapshot.moderators.length} assigned`
                       : "No delegated moderators"}
                   </strong>
@@ -1505,9 +1533,13 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
           open={moderatorInviteOpen}
           onOpenChange={(open) => {
             setModeratorInviteOpen(open);
-            if (!open) setIssuedModeratorToken(null);
+            if (!open) {
+              setIssuedModeratorToken(null);
+              setIssuedModeratorTargetEmail(null);
+            }
           }}
           token={issuedModeratorToken}
+          targetEmail={issuedModeratorTargetEmail}
         />
         <PlayerManagementDialog
           player={managedPlayer}
@@ -1851,8 +1883,14 @@ function TournamentLibrary({
   onOpenTournament,
   onJoinTournament,
   onRedeemModerator,
+  onCreateModeratorToken,
   onDeleteModerator,
   onDeleteAccount,
+  onBanAccount,
+  onRevokeSessions,
+  onKickGuest,
+  onRevokeGuestAccess,
+  onDeleteGuest,
   onRevokeModeratorToken,
   onDeleteModeratorToken,
   onCreateTestTournament,
@@ -1882,8 +1920,14 @@ function TournamentLibrary({
   onOpenTournament: (tournamentId: string) => void | Promise<void>;
   onJoinTournament: (tournament?: TournamentSummary) => void;
   onRedeemModerator: () => void;
+  onCreateModeratorToken: (targetEmail: string) => void | Promise<boolean>;
   onDeleteModerator: (email: string) => void | Promise<boolean>;
   onDeleteAccount: (email: string) => void | Promise<boolean>;
+  onBanAccount: (email: string, banned: boolean) => void | Promise<boolean>;
+  onRevokeSessions: (email: string) => void | Promise<boolean>;
+  onKickGuest: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
+  onRevokeGuestAccess: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
+  onDeleteGuest: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
   onRevokeModeratorToken: (tokenId: string) => void | Promise<boolean>;
   onDeleteModeratorToken: (tokenId: string) => void | Promise<boolean>;
   onCreateTestTournament: () => void | Promise<boolean>;
@@ -1917,7 +1961,7 @@ function TournamentLibrary({
                     prominent
                   />
                 )}
-                {payload.viewerGlobalRole !== "superadmin" && (
+                {payload.canRedeemModeratorToken && (
                   <Button variant="outline" onClick={onRedeemModerator}>
                     <ShieldCheck /> Use moderator token
                   </Button>
@@ -1965,14 +2009,22 @@ function TournamentLibrary({
         <SuperadminDirectory
           payload={payload}
           working={working}
+          onCreateModeratorToken={onCreateModeratorToken}
           onDeleteModerator={onDeleteModerator}
           onDeleteAccount={onDeleteAccount}
+          onBanAccount={onBanAccount}
+          onRevokeSessions={onRevokeSessions}
+          onKickGuest={onKickGuest}
+          onRevokeGuestAccess={onRevokeGuestAccess}
+          onDeleteGuest={onDeleteGuest}
           onRevokeToken={onRevokeModeratorToken}
           onDeleteToken={onDeleteModeratorToken}
           onCreateTestTournament={onCreateTestTournament}
           onRefresh={onRefresh}
         />
       )}
+
+      <StaffDirectory staff={payload.publicStaff} />
 
       <section className="library-section open-section">
         <div className="library-section-title">
@@ -2102,8 +2154,14 @@ function TournamentCard({
 function SuperadminDirectory({
   payload,
   working,
+  onCreateModeratorToken,
   onDeleteModerator,
   onDeleteAccount,
+  onBanAccount,
+  onRevokeSessions,
+  onKickGuest,
+  onRevokeGuestAccess,
+  onDeleteGuest,
   onRevokeToken,
   onDeleteToken,
   onCreateTestTournament,
@@ -2111,14 +2169,21 @@ function SuperadminDirectory({
 }: {
   payload: ManagerPayload;
   working: boolean;
+  onCreateModeratorToken: (targetEmail: string) => void | Promise<boolean>;
   onDeleteModerator: (email: string) => void | Promise<boolean>;
   onDeleteAccount: (email: string) => void | Promise<boolean>;
+  onBanAccount: (email: string, banned: boolean) => void | Promise<boolean>;
+  onRevokeSessions: (email: string) => void | Promise<boolean>;
+  onKickGuest: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
+  onRevokeGuestAccess: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
+  onDeleteGuest: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
   onRevokeToken: (tokenId: string) => void | Promise<boolean>;
   onDeleteToken: (tokenId: string) => void | Promise<boolean>;
   onCreateTestTournament: () => void | Promise<boolean>;
   onRefresh: () => void | Promise<void>;
 }) {
   const now = new Date(payload.serverTime).getTime();
+  const activeBans = payload.accounts.filter((account) => account.isBanned).length;
 
   function tokenStatus(token: ManagerPayload["moderatorTokens"][number]) {
     if (token.usedAt) return "used" as const;
@@ -2134,6 +2199,37 @@ function SuperadminDirectory({
     }).format(new Date(value));
   }
 
+  function actionLabel(action: string) {
+    return action.replaceAll("_", " ");
+  }
+
+  function renderAuditRows(limit?: number) {
+    const entries = typeof limit === "number"
+      ? payload.moderationAuditLog.slice(0, limit)
+      : payload.moderationAuditLog;
+    if (!entries.length) return <p className="directory-empty">No moderation activity yet.</p>;
+    return (
+      <div className="audit-list">
+        {entries.map((entry) => (
+          <div className="audit-row" key={entry.id}>
+            <span>
+              <strong>{entry.actorName ?? entry.actorEmail}</strong>
+              <small>
+                {actionLabel(entry.action)}
+                {entry.targetName || entry.targetEmail
+                  ? ` · ${entry.targetName ?? entry.targetEmail}`
+                  : ""}
+                {entry.tournamentName ? ` · ${entry.tournamentName}` : ""}
+              </small>
+              {entry.detail && <small>{entry.detail}</small>}
+            </span>
+            <time dateTime={entry.createdAt}>{compactDate(entry.createdAt)}</time>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <section className="library-section admin-directory">
       <div className="library-section-title">
@@ -2142,6 +2238,11 @@ function SuperadminDirectory({
           <h2><Crown /> Superadmin control desk</h2>
         </div>
         <div className="admin-directory-actions">
+          <CreateModeratorTokenDialog
+            accounts={payload.accounts.filter((account) => !account.isModerator && !account.isSuperadmin && !account.isBanned)}
+            working={working}
+            onCreate={onCreateModeratorToken}
+          />
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="outline" disabled={working}>
@@ -2171,126 +2272,278 @@ function SuperadminDirectory({
         </div>
       </div>
       <p className="admin-directory-note">
-        Moderator tokens work once and expire after seven days. Full codes are
-        never stored; this ledger keeps a safe masked reference, its scope, and
-        exactly who redeemed it.
+        Moderator invitations are single-use and expire after seven days. Full
+        codes are never stored; this ledger keeps the masked reference, the
+        assigned registered email, and exactly who redeemed it.
+        Moderators can run every tournament and manage pairings, players, and
+        results; only you can change staff, accounts, guests, or site access.
       </p>
-      <div className="token-ledger">
-        <div className="token-ledger-heading">
-          <div>
-            <h3>Moderator token ledger</h3>
-            <p>{payload.moderatorTokens.length} token(s) recorded</p>
+      <Tabs defaultValue="overview" className="admin-tabs">
+        <TabsList variant="line" className="admin-tabs-list" aria-label="Superadmin sections">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="moderators">Moderators</TabsTrigger>
+          <TabsTrigger value="guests">Guests</TabsTrigger>
+          <TabsTrigger value="tokens">Tokens</TabsTrigger>
+          <TabsTrigger value="activity">Activity</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="admin-tab-panel">
+          <div className="admin-overview-grid">
+            <div><strong>{payload.accounts.length}</strong><span>Registered accounts</span></div>
+            <div><strong>{payload.moderators.length}</strong><span>Moderators</span></div>
+            <div><strong>{payload.guests.length}</strong><span>Guest entries</span></div>
+            <div><strong>{payload.tournaments.length}</strong><span>Tournaments</span></div>
+            <div><strong>{activeBans}</strong><span>Active bans</span></div>
+            <div><strong>{payload.moderatorTokens.filter((token) => tokenStatus(token) === "unused").length}</strong><span>Pending tokens</span></div>
           </div>
-          <Button variant="outline" size="sm" disabled={working} onClick={() => void onRefresh()}>
-            <RefreshCw /> Refresh
-          </Button>
-        </div>
-        {payload.moderatorTokens.length ? (
-          <div className="token-ledger-list">
-            {payload.moderatorTokens.map((token) => {
-              const status = tokenStatus(token);
-              return (
-                <article className="token-ledger-row" key={token.id}>
-                  <div className="token-ledger-identity">
-                    <code>{token.tokenHint ?? "Legacy token"}</code>
-                    <span className={`token-status token-status-${status}`}>{status}</span>
-                  </div>
-                  <div className="token-ledger-detail">
-                    <strong>{token.tournamentName ?? "Global moderator"}</strong>
-                    <small>Created by {token.createdByName ?? token.createdByEmail}</small>
-                    <small>{compactDate(token.createdAt)} · expires {compactDate(token.expiresAt)}</small>
-                  </div>
-                  <div className="token-ledger-user">
-                    {token.usedAt ? (
-                      <>
-                        <strong>{token.usedByName ?? token.usedByEmail}</strong>
-                        <small>{token.usedByEmail}</small>
-                        <small>Used {compactDate(token.usedAt)}</small>
-                      </>
-                    ) : token.revokedAt ? (
-                      <>
-                        <strong>Revoked</strong>
-                        <small>By {token.revokedByEmail ?? "superadmin"}</small>
-                        <small>{compactDate(token.revokedAt)}</small>
-                      </>
-                    ) : (
-                      <>
-                        <strong>No one has used it</strong>
-                        <small>{status === "expired" ? "Expired without use" : "Waiting for redemption"}</small>
-                      </>
+          <div className="admin-directory-table">
+            <h3>Recent moderation activity</h3>
+            {renderAuditRows(8)}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="accounts" className="admin-tab-panel">
+          <div className="admin-directory-table">
+            <h3>Members / registered accounts</h3>
+            {payload.accounts.map((account) => (
+              <div className="directory-row" key={account.email}>
+                <span>
+                  <strong>{account.displayName} · {account.email}</strong>
+                  <small>
+                    {account.isSuperadmin ? "Superadmin" : account.isModerator ? "Moderator" : "Registered"}
+                    {account.isBanned ? " · Banned" : " · Active"}
+                  </small>
+                </span>
+                {account.email !== payload.viewerEmail && (
+                  <div className="directory-row-actions">
+                    {!account.isModerator && !account.isBanned && (
+                      <Button variant="outline" size="sm" disabled={working} onClick={() => void onCreateModeratorToken(account.email)}>
+                        <ShieldCheck /> Invite moderator
+                      </Button>
                     )}
-                  </div>
-                  <div className="token-ledger-actions">
-                    {status === "unused" && (
+                    {account.isModerator && (
                       <DangerConfirmDialog
-                        triggerLabel="Revoke"
-                        title={`Revoke ${token.tokenHint ?? "this token"}?`}
-                        description="It will stop working immediately and cannot be restored."
+                        triggerLabel="Revoke moderator"
+                        title={`Revoke ${account.displayName}'s moderator access?`}
+                        description="This removes global moderator access. The registered account remains available."
                         working={working}
-                        onConfirm={() => onRevokeToken(token.id)}
+                        onConfirm={() => onDeleteModerator(account.email)}
                       />
                     )}
+                    <Button variant="outline" size="sm" disabled={working} onClick={() => void onRevokeSessions(account.email)}>
+                      <UserX /> Revoke sessions
+                    </Button>
                     <DangerConfirmDialog
-                      triggerLabel="Delete"
-                      title={`Permanently delete ${token.tokenHint ?? "this token record"}?`}
-                      description="This permanently removes the token and its usage history from the ledger. This cannot be undone."
+                      triggerLabel={account.isBanned ? "Unban" : "Ban"}
+                      title={`${account.isBanned ? "Unban" : "Ban"} ${account.displayName}?`}
+                      description={account.isBanned ? "This restores sign-in access." : "This blocks sign-in, revokes sessions, and removes moderator access."}
                       working={working}
-                      onConfirm={() => onDeleteToken(token.id)}
+                      onConfirm={() => onBanAccount(account.email, !account.isBanned)}
+                      icon={account.isBanned ? "undo" : "trash"}
+                    />
+                    <DangerConfirmDialog
+                      triggerLabel="Delete account"
+                      title={`Delete ${account.displayName}'s account?`}
+                      description="This removes their app account and moderator access. Existing tournament results remain, but their player entries are detached from the deleted account."
+                      working={working}
+                      onConfirm={() => onDeleteAccount(account.email)}
                     />
                   </div>
-                </article>
-              );
-            })}
+                )}
+              </div>
+            ))}
           </div>
-        ) : (
-          <p className="directory-empty">No moderator tokens yet.</p>
-        )}
-      </div>
-      <div className="admin-directory-grid">
-        <div className="admin-directory-table">
-          <h3>Moderators</h3>
-          {payload.moderators.length ? (
-            payload.moderators.map((moderator) => (
+        </TabsContent>
+
+        <TabsContent value="moderators" className="admin-tab-panel">
+          <div className="admin-directory-table">
+            <h3>Moderators</h3>
+            {payload.moderators.length ? payload.moderators.map((moderator) => (
               <div className="directory-row" key={moderator.email}>
                 <span>
-                  <strong>{moderator.displayName}</strong>
-                  <small>{moderator.email} · {moderator.tournamentCount} tournament(s)</small>
+                  <strong>{moderator.displayName} · {moderator.email}</strong>
+                  <small>Global tournament access · joined {compactDate(moderator.createdAt)}</small>
                 </span>
                 <DangerConfirmDialog
-                  triggerLabel="Delete moderator"
-                  title={`Delete moderator ${moderator.displayName}?`}
-                  description="This revokes every tournament assignment and moderator token. Their player account remains available."
+                  triggerLabel="Revoke moderator"
+                  title={`Revoke moderator access for ${moderator.displayName}?`}
+                  description="Their registered account remains available, but all moderator authority is removed."
                   working={working}
                   onConfirm={() => onDeleteModerator(moderator.email)}
                 />
               </div>
-            ))
-          ) : (
-            <p className="directory-empty">No moderators yet.</p>
-          )}
-        </div>
-        <div className="admin-directory-table">
-          <h3>Accounts</h3>
-          {payload.accounts.map((account) => (
-            <div className="directory-row" key={account.email}>
-              <span>
-                <strong>{account.displayName}</strong>
-                <small>
-                  {account.email}{account.isModerator ? " · Moderator" : " · Player"}
-                </small>
-              </span>
-              {account.email !== payload.viewerEmail && (
-                <DangerConfirmDialog
-                  triggerLabel="Delete account"
-                  title={`Delete ${account.displayName}'s account?`}
-                  description="This removes their app account and moderator access. Existing tournament results remain, but their player entries are detached from the deleted account."
-                  working={working}
-                  onConfirm={() => onDeleteAccount(account.email)}
-                />
-              )}
+            )) : <p className="directory-empty">No moderators yet.</p>}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="guests" className="admin-tab-panel">
+          <div className="admin-directory-table">
+            <h3>Guest entries</h3>
+            {payload.guests.length ? payload.guests.map((guest) => (
+              <div className="directory-row" key={`${guest.tournamentId}:${guest.playerId}`}>
+                <span>
+                  <strong>{guest.name} · {guest.tournamentName}</strong>
+                  <small>
+                    FIDE {guest.fideId || "—"} · {guest.rating} rating · {guest.withdrawn ? "Kicked / withdrawn" : "Active guest"} · joined {compactDate(guest.createdAt)}
+                  </small>
+                </span>
+                <div className="directory-row-actions">
+                  {!guest.withdrawn && (
+                    <DangerConfirmDialog
+                      triggerLabel="Kick"
+                      title={`Kick ${guest.name} from ${guest.tournamentName}?`}
+                      description="The guest will be withdrawn from future rounds and their browser access will be revoked."
+                      working={working}
+                      onConfirm={() => onKickGuest(guest)}
+                    />
+                  )}
+                  <DangerConfirmDialog
+                    triggerLabel="Revoke access"
+                    title={`Revoke ${guest.name}'s guest access?`}
+                    description="Their tournament entry and results remain, but existing guest tokens and sessions stop working."
+                    working={working}
+                    onConfirm={() => onRevokeGuestAccess(guest)}
+                  />
+                  <DangerConfirmDialog
+                    triggerLabel="Delete"
+                    title={`Delete ${guest.name}'s guest entry?`}
+                    description="This removes the guest entry only if pairing history has not started."
+                    working={working}
+                    onConfirm={() => onDeleteGuest(guest)}
+                  />
+                </div>
+              </div>
+            )) : <p className="directory-empty">No accountless guest entries.</p>}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="tokens" className="admin-tab-panel">
+          <div className="token-ledger">
+            <div className="token-ledger-heading">
+              <div><h3>Moderator token ledger</h3><p>{payload.moderatorTokens.length} token(s) recorded</p></div>
+              <Button variant="outline" size="sm" disabled={working} onClick={() => void onRefresh()}><RefreshCw /> Refresh</Button>
             </div>
-          ))}
-        </div>
+            {payload.moderatorTokens.length ? (
+              <div className="token-ledger-list">
+                {payload.moderatorTokens.map((token) => {
+                  const status = tokenStatus(token);
+                  return (
+                    <article className="token-ledger-row" key={token.id}>
+                      <div className="token-ledger-identity"><code>{token.tokenHint ?? "Legacy token"}</code><span className={`token-status token-status-${status}`}>{status}</span></div>
+                      <div className="token-ledger-detail">
+                        <strong>{token.targetName ?? token.targetEmail ?? "Registered account"}</strong>
+                        <small>{token.targetEmail ?? "No target recorded"}</small>
+                        <small>Created by {token.createdByName ?? token.createdByEmail}</small>
+                        <small>{compactDate(token.createdAt)} · expires {compactDate(token.expiresAt)}</small>
+                      </div>
+                      <div className="token-ledger-user">
+                        {token.usedAt ? <><strong>{token.usedByName ?? token.usedByEmail}</strong><small>{token.usedByEmail}</small><small>Used {compactDate(token.usedAt)}</small></>
+                          : token.revokedAt ? <><strong>Revoked</strong><small>By {token.revokedByEmail ?? "superadmin"}</small><small>{compactDate(token.revokedAt)}</small></>
+                            : <><strong>No one has used it</strong><small>{status === "expired" ? "Expired without use" : "Waiting for redemption"}</small></>}
+                      </div>
+                      <div className="token-ledger-actions">
+                        {status === "unused" && <DangerConfirmDialog triggerLabel="Revoke" title={`Revoke ${token.tokenHint ?? "this token"}?`} description="It will stop working immediately and cannot be restored." working={working} onConfirm={() => onRevokeToken(token.id)} />}
+                        <DangerConfirmDialog triggerLabel="Delete" title={`Permanently delete ${token.tokenHint ?? "this token record"}?`} description="This permanently removes the token record. The moderation activity log remains." working={working} onConfirm={() => onDeleteToken(token.id)} />
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : <p className="directory-empty">No moderator tokens yet.</p>}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="activity" className="admin-tab-panel">
+          <div className="admin-directory-table"><h3>Moderation activity log</h3>{renderAuditRows()}</div>
+        </TabsContent>
+      </Tabs>
+    </section>
+  );
+}
+
+function CreateModeratorTokenDialog({
+  accounts,
+  working,
+  onCreate,
+}: {
+  accounts: ManagerPayload["accounts"];
+  working: boolean;
+  onCreate: (targetEmail: string) => void | Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [targetEmail, setTargetEmail] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!targetEmail) return;
+    const created = await onCreate(targetEmail);
+    if (created) {
+      setOpen(false);
+      setTargetEmail("");
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" disabled={working || accounts.length === 0}>
+          <ShieldCheck /> Create moderator token
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="create-dialog">
+        <DialogHeader>
+          <p className="section-code">SUPERADMIN / MODERATOR INVITATION</p>
+          <DialogTitle>Create moderator token</DialogTitle>
+          <DialogDescription>
+            Choose an existing registered account. Only that email can redeem the
+            single-use invitation; it expires after seven days.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="dialog-form" onSubmit={submit}>
+          <label>
+            <span>Registered account</span>
+            <Select value={targetEmail} onValueChange={setTargetEmail}>
+              <SelectTrigger><SelectValue placeholder="Choose an account" /></SelectTrigger>
+              <SelectContent>
+                {accounts.map((account) => (
+                  <SelectItem key={account.email} value={account.email}>
+                    {account.displayName} · {account.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          <DialogFooter>
+            <Button type="submit" disabled={working || !targetEmail}>
+              <ShieldCheck /> Create invitation
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function StaffDirectory({
+  staff,
+}: {
+  staff: ManagerPayload["publicStaff"];
+}) {
+  if (!staff.length) return null;
+  return (
+    <section className="library-section staff-directory">
+      <div className="library-section-title">
+        <p className="section-code">STAFF / PUBLIC DIRECTORY</p>
+        <span>{staff.length} STAFF</span>
+      </div>
+      <div className="staff-list">
+        {staff.map((person, index) => (
+          <div className="staff-list-row" key={`${person.role}:${person.displayName}:${index}`}>
+            <strong>{person.displayName}</strong>
+            <span className={`role-badge role-${person.role}`}>{person.role === "superadmin" ? "SUPERADMIN" : "MODERATOR"}</span>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -2734,8 +2987,9 @@ function RedeemModeratorDialog({
           <p className="section-code">ONE-TIME / MODERATOR TOKEN</p>
           <DialogTitle>Activate moderator access.</DialogTitle>
           <DialogDescription>
-            Each token can be used by exactly one signed-in account. A
-            tournament token grants control only for that tournament.
+            This invitation is linked to your registered email. It can be used
+            once and grants global tournament-organizer access, not site-wide
+            moderation powers.
           </DialogDescription>
         </DialogHeader>
         <form className="dialog-form" onSubmit={onSubmit}>
@@ -2765,10 +3019,12 @@ function ModeratorTokenDialog({
   open,
   onOpenChange,
   token,
+  targetEmail,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   token: string | null;
+  targetEmail: string | null;
 }) {
   async function copyToken() {
     if (!token) return;
@@ -2788,6 +3044,7 @@ function ModeratorTokenDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="issued-token">
+          <small>Assigned account: {targetEmail ?? "registered account"}</small>
           <code>{token ?? "—"}</code>
           <Button onClick={() => void copyToken()} disabled={!token}>
             <Copy /> Copy token

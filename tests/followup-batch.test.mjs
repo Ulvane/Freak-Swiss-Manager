@@ -96,6 +96,17 @@ async function post(route, body, cookie = "") {
   };
 }
 
+async function getManager(cookie = "") {
+  globalThis.__freakFollowupCookies = new Map(
+    cookie
+      .split(";")
+      .filter(Boolean)
+      .map((part) => part.trim().split("=")),
+  );
+  const response = await manager.GET(new Request("https://test.invalid/api/manager"));
+  return { status: response.status, data: await response.json() };
+}
+
 async function account(label) {
   const email = `${label}@example.test`;
   const response = await post(register, {
@@ -117,7 +128,8 @@ async function tournament(ownerCookie, name) {
   return database.prepare("SELECT * FROM tournaments WHERE id = ?").get(response.data.tournamentId);
 }
 
-test("owner-issued moderator tokens are single-use and remain tournament-scoped", async () => {
+test("superadmin-issued moderator tokens are targeted, single-use, and global", async () => {
+  process.env.SUPERADMIN_EMAIL = "token-owner@example.test";
   const owner = await account("token-owner");
   const moderator = await account("token-moderator");
   const stranger = await account("token-stranger");
@@ -126,11 +138,18 @@ test("owner-issued moderator tokens are single-use and remain tournament-scoped"
 
   const issued = await post(
     manager,
-    { action: "create_moderator_token", tournamentId: controlled.id },
+    { action: "create_moderator_token", targetEmail: moderator.email },
     owner.cookie,
   );
   assert.equal(issued.status, 200, JSON.stringify(issued.data));
   assert.match(issued.data.moderatorToken, /^MOD-/);
+
+  const wrongAccount = await post(
+    manager,
+    { action: "redeem_moderator_token", token: issued.data.moderatorToken },
+    stranger.cookie,
+  );
+  assert.equal(wrongAccount.status, 403);
 
   const redeemed = await post(
     manager,
@@ -138,13 +157,7 @@ test("owner-issued moderator tokens are single-use and remain tournament-scoped"
     moderator.cookie,
   );
   assert.equal(redeemed.status, 200, JSON.stringify(redeemed.data));
-  assert.deepEqual(
-    { ...database.prepare(
-      "SELECT moderator_email AS moderatorEmail, assigned_by_email AS assignedByEmail FROM tournament_moderators WHERE tournament_id = ?",
-    ).get(controlled.id) },
-    { moderatorEmail: moderator.email, assignedByEmail: owner.email },
-  );
-  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM moderators WHERE email = ?").get(moderator.email).count, 0);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM moderators WHERE email = ?").get(moderator.email).count, 1);
 
   const reused = await post(
     manager,
@@ -176,16 +189,77 @@ test("owner-issued moderator tokens are single-use and remain tournament-scoped"
       name: "Forbidden update",
       rounds: 5,
     }, moderator.cookie)).status,
+    200,
+  );
+  assert.equal(
+    (await post(manager, {
+      action: "revoke_moderator",
+      tournamentId: controlled.id,
+      email: moderator.email,
+    }, moderator.cookie)).status,
     403,
   );
   assert.equal(
     (await post(manager, {
-      action: "remove_tournament_moderator",
-      tournamentId: controlled.id,
+      action: "revoke_moderator",
       email: moderator.email,
     }, owner.cookie)).status,
     200,
   );
+});
+
+test("site moderation controls remain superadmin-only and are visible in the private directory", async () => {
+  process.env.SUPERADMIN_EMAIL = "controls-admin@example.test";
+  const admin = await account("controls-admin");
+  const moderator = await account("controls-moderator");
+  const member = await account("controls-member");
+
+  assert.equal((await post(manager, {
+    action: "grant_moderator",
+    email: moderator.email,
+  }, member.cookie)).status, 403);
+  assert.equal((await post(manager, {
+    action: "grant_moderator",
+    email: moderator.email,
+  }, admin.cookie)).status, 200);
+  assert.equal((await post(manager, {
+    action: "set_account_banned",
+    email: member.email,
+    banned: true,
+  }, moderator.cookie)).status, 403);
+
+  const event = await tournament(admin.cookie, "Moderation controls event");
+  const guest = await post(manager, {
+    action: "join_tournament",
+    joinCode: event.join_code,
+    name: "Guest Access",
+    rating: 1500,
+  });
+  assert.equal(guest.status, 201, JSON.stringify(guest.data));
+  assert.equal((await post(manager, {
+    action: "revoke_guest_access",
+    tournamentId: event.id,
+    playerId: guest.data.playerId,
+  }, moderator.cookie)).status, 403);
+  assert.equal((await post(manager, {
+    action: "revoke_guest_access",
+    tournamentId: event.id,
+    playerId: guest.data.playerId,
+  }, admin.cookie)).status, 200);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM player_sessions WHERE player_id = ?").get(guest.data.playerId).count, 0);
+
+  const directory = await getManager(admin.cookie);
+  assert.equal(directory.status, 200);
+  assert.ok(directory.data.accounts.some((account) => account.email === member.email));
+  assert.ok(directory.data.guests.some((entry) => entry.playerId === guest.data.playerId));
+  assert.ok(directory.data.moderationAuditLog.some((entry) => entry.action === "grant_moderator"));
+  assert.ok(directory.data.moderationAuditLog.some((entry) => entry.action === "revoke_guest_access"));
+
+  const publicDirectory = await getManager();
+  assert.deepEqual(publicDirectory.data.accounts, []);
+  assert.deepEqual(publicDirectory.data.guests, []);
+  assert.deepEqual(publicDirectory.data.moderationAuditLog, []);
+  assert.ok(publicDirectory.data.publicStaff.every((entry) => !Object.hasOwn(entry, "email")));
 });
 
 test("all registration paths reject duplicate FIDE IDs while allowing real name collisions", async () => {

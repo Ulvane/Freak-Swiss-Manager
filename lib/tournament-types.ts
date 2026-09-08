@@ -61,6 +61,27 @@ export type AccountSummary = {
   createdAt: string;
   lastSeenAt: string;
   isModerator: boolean;
+  isSuperadmin: boolean;
+  isBanned: boolean;
+  banReason: string | null;
+};
+
+export type GuestSummary = {
+  playerId: string;
+  tournamentId: string;
+  tournamentName: string;
+  name: string;
+  fideId: string;
+  rating: number;
+  withdrawn: boolean;
+  guestExpiresAt: string | null;
+  guestTokenHint: string | null;
+  createdAt: string;
+};
+
+export type PublicStaffSummary = {
+  displayName: string;
+  role: "superadmin" | "moderator";
 };
 
 export type ModeratorTokenSummary = {
@@ -68,6 +89,8 @@ export type ModeratorTokenSummary = {
   tokenHint: string | null;
   tournamentId: string | null;
   tournamentName: string | null;
+  targetEmail: string | null;
+  targetName: string | null;
   createdByEmail: string;
   createdByName: string | null;
   usedByEmail: string | null;
@@ -76,6 +99,19 @@ export type ModeratorTokenSummary = {
   revokedAt: string | null;
   revokedByEmail: string | null;
   expiresAt: string;
+  createdAt: string;
+};
+
+export type ModerationAuditSummary = {
+  id: string;
+  actorEmail: string;
+  actorName: string | null;
+  action: string;
+  targetEmail: string | null;
+  targetName: string | null;
+  tournamentId: string | null;
+  tournamentName: string | null;
+  detail: string | null;
   createdAt: string;
 };
 
@@ -135,4 +171,8 @@ export type ManagerPayload = {
   accounts: AccountSummary[];
   moderators: ModeratorSummary[];
   moderatorTokens: ModeratorTokenSummary[];
+  guests: GuestSummary[];
+  moderationAuditLog: ModerationAuditSummary[];
+  publicStaff: PublicStaffSummary[];
+  canRedeemModeratorToken: boolean;
 };
