@@ -2280,12 +2280,12 @@ function SuperadminDirectory({
       </p>
       <Tabs defaultValue="overview" className="admin-tabs">
         <TabsList variant="line" className="admin-tabs-list" aria-label="Superadmin sections">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="accounts">Accounts</TabsTrigger>
-          <TabsTrigger value="moderators">Moderators</TabsTrigger>
-          <TabsTrigger value="guests">Guests</TabsTrigger>
-          <TabsTrigger value="tokens">Tokens</TabsTrigger>
-          <TabsTrigger value="activity">Activity</TabsTrigger>
+          <TabsTrigger value="overview"><span>01</span> Overview</TabsTrigger>
+          <TabsTrigger value="accounts"><span>02</span> Accounts</TabsTrigger>
+          <TabsTrigger value="moderators"><span>03</span> Moderators</TabsTrigger>
+          <TabsTrigger value="guests"><span>04</span> Guests</TabsTrigger>
+          <TabsTrigger value="tokens"><span>05</span> Tokens</TabsTrigger>
+          <TabsTrigger value="activity"><span>06</span> Activity</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="admin-tab-panel">
