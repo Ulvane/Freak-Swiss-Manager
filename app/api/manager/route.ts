@@ -308,6 +308,7 @@ async function loadSnapshot(
     pairingRows,
     roundStatusRows,
     tournamentModerators,
+    organizerRow,
     playerSession,
   ] = await Promise.all([
     database
@@ -349,6 +350,10 @@ async function loadSnapshot(
       .bind(tournamentId)
       .all<RoundStatusRecord>(),
     canEdit ? loadTournamentModerators(tournamentId) : Promise.resolve([]),
+    database
+      .prepare(`SELECT display_name AS displayName FROM user_accounts WHERE email = ?`)
+      .bind(normalizeEmail(row.ownerEmail))
+      .first<{ displayName: string }>(),
     playerSessionTokenHash
       ? database
           .prepare(
@@ -390,6 +395,15 @@ async function loadSnapshot(
           player.id === playerSession?.playerId,
       ),
   );
+  const isOrganizer = Boolean(
+    viewerEmail && normalizeEmail(tournament.ownerEmail) === normalizeEmail(viewerEmail),
+  );
+  const isDelegated = Boolean(
+    viewerEmail &&
+      tournamentModerators.some(
+        (moderator) => normalizeEmail(moderator.email) === viewerEmail,
+      ),
+  );
   const viewerRole: TournamentSnapshot["viewerRole"] = controlRole
     ? controlRole
     : isPlayer
@@ -409,6 +423,17 @@ async function loadSnapshot(
     canRemoveModerators: Boolean(
       viewerEmail &&
         isSuperadmin(viewerEmail),
+    ),
+    organizerName: organizerRow?.displayName ?? null,
+    canJoinDelegation: Boolean(
+      !isOrganizer &&
+        !isDelegated &&
+        (controlRole === "moderator" || controlRole === "superadmin"),
+    ),
+    canLeaveDelegation: Boolean(
+      !isOrganizer &&
+        isDelegated &&
+        (controlRole === "moderator" || controlRole === "superadmin"),
     ),
     canManageCheckIn: canEdit && Number(tournament.currentRound) === 0,
     canChangeVisibility: Boolean(
@@ -432,6 +457,7 @@ async function loadSnapshot(
 
 async function loadAdminDirectory() {
   const database = getDatabase();
+  const now = new Date().toISOString();
   const [accountRows, moderatorRows, tokenRows, guestRows, auditRows] = await Promise.all([
     database
       .prepare(
@@ -492,9 +518,11 @@ async function loadAdminDirectory() {
          JOIN tournaments t ON t.id = p.tournament_id
          LEFT JOIN guest_tokens gt ON gt.player_id = p.id
          WHERE p.account_email IS NULL
+           AND (p.guest_expires_at IS NULL OR p.guest_expires_at > ?)
          ORDER BY p.created_at DESC
          LIMIT 500`,
       )
+      .bind(now)
       .all<GuestSummary & { withdrawn: number | boolean; rating: number }>(),
     database
       .prepare(
@@ -676,23 +704,26 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
         )
         .all<RawTournamentSummary>(),
     ]);
-    const personalIds = new Set(tournaments.map((item) => item.id));
     openTournaments = ((openRows.results ?? []) as RawTournamentSummary[])
-      .filter((row) => !personalIds.has(row.id))
-      .map((row) => ({
-        ...publicTournament(row),
-        joinCode: null,
-        playerCount: Number(row.playerCount),
-        role: "visitor" as const,
-      }));
+      .map((row) => {
+        const personal = tournaments.find((item) => item.id === row.id);
+        return {
+          ...publicTournament(row),
+          joinCode: null,
+          playerCount: Number(row.playerCount),
+          role: personal?.role ?? ("visitor" as const),
+        };
+      });
     communityTournaments = ((communityRows.results ?? []) as RawTournamentSummary[])
-      .filter((row) => !personalIds.has(row.id))
-      .map((row) => ({
-        ...publicTournament(row),
-        joinCode: null,
-        playerCount: Number(row.playerCount),
-        role: "visitor" as const,
-      }));
+      .map((row) => {
+        const personal = tournaments.find((item) => item.id === row.id);
+        return {
+          ...publicTournament(row),
+          joinCode: null,
+          playerCount: Number(row.playerCount),
+          role: personal?.role ?? ("visitor" as const),
+        };
+      });
   }
   const snapshot = selectedId
     ? await loadSnapshot(selectedId, viewerEmail, playerSessionTokenHash)
@@ -831,6 +862,9 @@ type ManagerAction =
   | { action: "kick_guest"; tournamentId?: string; playerId?: string }
   | { action: "revoke_guest_access"; tournamentId?: string; playerId?: string }
   | { action: "delete_guest"; tournamentId?: string; playerId?: string }
+  | { action: "bulk_delete_guests"; playerIds?: string[] }
+  | { action: "join_tournament_delegation"; tournamentId?: string }
+  | { action: "leave_tournament_delegation"; tournamentId?: string }
   | { action: "delete_account"; email?: string };
 
 export async function POST(request: Request) {
@@ -1569,6 +1603,83 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, tournamentId: id }, { status: 201 });
     }
 
+    if (body.action === "bulk_delete_guests") {
+      if (!isSuperadmin(email)) {
+        return Response.json({ error: "Superadmin access required." }, { status: 403 });
+      }
+      const playerIds = Array.from(
+        new Set(
+          (Array.isArray(body.playerIds) ? body.playerIds : [])
+            .map((playerId) => cleanText(playerId, 80))
+            .filter(Boolean),
+        ),
+      ).slice(0, 500);
+      if (!playerIds.length) {
+        return Response.json({ error: "Choose at least one guest." }, { status: 400 });
+      }
+      const placeholders = playerIds.map(() => "?").join(", ");
+      const rows = await database
+        .prepare(
+          `SELECT p.id, p.tournament_id AS tournamentId, t.current_round AS currentRound
+           FROM players p JOIN tournaments t ON t.id = p.tournament_id
+           WHERE p.id IN (${placeholders}) AND p.account_email IS NULL`,
+        )
+        .bind(...playerIds)
+        .all<{ id: string; tournamentId: string; currentRound: number }>();
+      const now = new Date().toISOString();
+      const writes: D1PreparedStatement[] = [];
+      let preservedHistoryCount = 0;
+      for (const guest of rows.results ?? []) {
+        if (Number(guest.currentRound) > 0) {
+          preservedHistoryCount += 1;
+          writes.push(
+            database
+              .prepare(
+                `UPDATE players
+                 SET withdrawn = 1, checked_in = 0,
+                     withdrawn_from_round = COALESCE(withdrawn_from_round, ?),
+                     guest_expires_at = ?, guest_token_hash = NULL
+                 WHERE id = ? AND tournament_id = ?`,
+              )
+              .bind(Number(guest.currentRound) + 1, now, guest.id, guest.tournamentId),
+            database.prepare(`DELETE FROM player_sessions WHERE player_id = ?`).bind(guest.id),
+            database.prepare(`DELETE FROM guest_tokens WHERE player_id = ?`).bind(guest.id),
+          );
+        } else {
+          writes.push(
+            database.prepare(`DELETE FROM player_sessions WHERE player_id = ?`).bind(guest.id),
+            database.prepare(`DELETE FROM guest_tokens WHERE player_id = ?`).bind(guest.id),
+            database
+              .prepare(`DELETE FROM players WHERE id = ? AND tournament_id = ?`)
+              .bind(guest.id, guest.tournamentId),
+          );
+        }
+        writes.push(
+          database
+            .prepare(
+              `INSERT INTO moderation_audit_log
+                 (id, actor_email, action, tournament_id, detail, created_at)
+               VALUES (?, ?, 'delete_guest', ?, ?, ?)`,
+            )
+            .bind(
+              crypto.randomUUID(),
+              email,
+              guest.tournamentId,
+              Number(guest.currentRound) > 0
+                ? `guest ${guest.id} removed; historical record preserved`
+                : `guest ${guest.id} deleted`,
+              now,
+            ),
+        );
+      }
+      if (writes.length) await database.batch(writes);
+      return Response.json({
+        ok: true,
+        deletedCount: (rows.results ?? []).length - preservedHistoryCount,
+        preservedHistoryCount,
+      });
+    }
+
     if (
       body.action === "kick_guest" ||
       body.action === "revoke_guest_access" ||
@@ -1588,9 +1699,6 @@ export async function POST(request: Request) {
         .bind(guestPlayerId, guestTournamentId)
         .first<{ id: string; tournamentId: string; currentRound: number }>();
       if (!guest) return Response.json({ error: "Guest entry not found." }, { status: 404 });
-      if (body.action === "delete_guest" && Number(guest.currentRound) > 0) {
-        return Response.json({ error: "After pairing starts, kick the guest instead of deleting history." }, { status: 409 });
-      }
       const now = new Date().toISOString();
       if (body.action === "revoke_guest_access") {
         await database.batch([
@@ -1629,18 +1737,100 @@ export async function POST(request: Request) {
             .bind(crypto.randomUUID(), email, guestTournamentId, `guest ${guestPlayerId}`, now),
         ]);
       } else {
+        if (Number(guest.currentRound) > 0) {
+          await database.batch([
+            database
+              .prepare(
+                `UPDATE players
+                 SET withdrawn = 1, checked_in = 0,
+                     withdrawn_from_round = COALESCE(withdrawn_from_round, ?),
+                     guest_expires_at = ?, guest_token_hash = NULL
+                 WHERE id = ? AND tournament_id = ?`,
+              )
+              .bind(Number(guest.currentRound) + 1, now, guestPlayerId, guestTournamentId),
+            database.prepare(`DELETE FROM player_sessions WHERE player_id = ?`).bind(guestPlayerId),
+            database.prepare(`DELETE FROM guest_tokens WHERE player_id = ?`).bind(guestPlayerId),
+            database
+              .prepare(
+                `INSERT INTO moderation_audit_log
+                   (id, actor_email, action, tournament_id, detail, created_at)
+                 VALUES (?, ?, 'delete_guest', ?, ?, ?)`,
+              )
+              .bind(crypto.randomUUID(), email, guestTournamentId, `guest ${guestPlayerId} removed; historical record preserved`, now),
+          ]);
+        } else {
+          await database.batch([
+            database.prepare(`DELETE FROM players WHERE id = ? AND tournament_id = ?`).bind(guestPlayerId, guestTournamentId),
+            database
+              .prepare(
+                `INSERT INTO moderation_audit_log
+                   (id, actor_email, action, tournament_id, detail, created_at)
+                 VALUES (?, ?, 'delete_guest', ?, ?, ?)`,
+              )
+              .bind(crypto.randomUUID(), email, guestTournamentId, `guest ${guestPlayerId}`, now),
+          ]);
+        }
+      }
+      return Response.json({ ok: true });
+    }
+
+    if (
+      body.action === "join_tournament_delegation" ||
+      body.action === "leave_tournament_delegation"
+    ) {
+      if (globalRole !== "superadmin" && globalRole !== "moderator") {
+        return Response.json({ error: "Moderator access required." }, { status: 403 });
+      }
+      const delegationTournamentId = cleanText(body.tournamentId, 80);
+      const delegationTournament = await database
+        .prepare(`SELECT owner_email AS ownerEmail FROM tournaments WHERE id = ?`)
+        .bind(delegationTournamentId)
+        .first<{ ownerEmail: string }>();
+      if (!delegationTournament) {
+        return Response.json({ error: "Tournament not found." }, { status: 404 });
+      }
+      if (normalizeEmail(delegationTournament.ownerEmail) === email) {
+        return Response.json(
+          { error: "The organizer is already shown as the tournament owner." },
+          { status: 409 },
+        );
+      }
+      const now = new Date().toISOString();
+      if (body.action === "join_tournament_delegation") {
         await database.batch([
-          database.prepare(`DELETE FROM players WHERE id = ? AND tournament_id = ?`).bind(guestPlayerId, guestTournamentId),
+          database
+            .prepare(
+              `INSERT OR IGNORE INTO tournament_moderators
+                 (id, tournament_id, moderator_email, assigned_by_email, created_at)
+               VALUES (?, ?, ?, ?, ?)`,
+            )
+            .bind(crypto.randomUUID(), delegationTournamentId, email, email, now),
           database
             .prepare(
               `INSERT INTO moderation_audit_log
                  (id, actor_email, action, tournament_id, detail, created_at)
-               VALUES (?, ?, 'delete_guest', ?, ?, ?)`,
+               VALUES (?, ?, 'join_tournament_delegation', ?, ?, ?)`,
             )
-            .bind(crypto.randomUUID(), email, guestTournamentId, `guest ${guestPlayerId}`, now),
+            .bind(crypto.randomUUID(), email, delegationTournamentId, "joined tournament delegation", now),
+        ]);
+      } else {
+        await database.batch([
+          database
+            .prepare(
+              `DELETE FROM tournament_moderators
+               WHERE tournament_id = ? AND moderator_email = ?`,
+            )
+            .bind(delegationTournamentId, email),
+          database
+            .prepare(
+              `INSERT INTO moderation_audit_log
+                 (id, actor_email, action, tournament_id, detail, created_at)
+               VALUES (?, ?, 'leave_tournament_delegation', ?, ?, ?)`,
+            )
+            .bind(crypto.randomUUID(), email, delegationTournamentId, "left tournament delegation", now),
         ]);
       }
-      return Response.json({ ok: true });
+      return Response.json({ ok: true, tournamentId: delegationTournamentId });
     }
 
     const tournamentId = cleanText(body.tournamentId, 80);
@@ -2150,16 +2340,6 @@ export async function POST(request: Request) {
              WHERE id = ?`,
           )
           .bind(roundNumber, tournamentId),
-        ...(roundNumber === 1
-          ? [
-              database
-                .prepare(
-                  `UPDATE players SET guest_expires_at = NULL
-                   WHERE tournament_id = ? AND guest_expires_at IS NOT NULL`,
-                )
-                .bind(tournamentId),
-            ]
-          : []),
       ]);
       return Response.json({ ok: true, tournamentId, roundNumber });
     }

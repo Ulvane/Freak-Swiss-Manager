@@ -31,28 +31,28 @@ test("uses the maximum PBKDF2 iteration count supported by workerd", async () =>
   assert.doesNotMatch(authServer, /PASSWORD_ITERATIONS = 210_000/);
 });
 
-test("expires temporary guest players after exactly three days", async () => {
+test("expires temporary guest players after exactly seven days", async () => {
   const { guestExpiryFrom, GUEST_RETENTION_DAYS } = await vite.ssrLoadModule(
     "/lib/guest-players.ts",
   );
   const createdAt = new Date("2026-09-02T12:00:00.000Z");
 
-  assert.equal(GUEST_RETENTION_DAYS, 3);
-  assert.equal(guestExpiryFrom(createdAt), "2026-09-05T12:00:00.000Z");
+  assert.equal(GUEST_RETENTION_DAYS, 7);
+  assert.equal(guestExpiryFrom(createdAt), "2026-09-09T12:00:00.000Z");
 });
 
 test("cleans only expired, unpaired guest roster entries", async () => {
   const { cleanupExpiredGuestPlayers } = await vite.ssrLoadModule(
     "/lib/guest-players.ts",
   );
-  let sql = "";
-  let cutoff = "";
+  const statements = [];
+  const cutoffs = [];
   const database = {
     prepare(statement) {
-      sql = statement;
+      statements.push(statement);
       return {
         bind(value) {
-          cutoff = value;
+          cutoffs.push(value);
           return { run: async () => ({ success: true }) };
         },
       };
@@ -64,10 +64,14 @@ test("cleans only expired, unpaired guest roster entries", async () => {
     new Date("2026-09-05T12:00:00.000Z"),
   );
 
-  assert.match(sql, /guest_expires_at IS NOT NULL/);
-  assert.match(sql, /guest_expires_at <= \?/);
-  assert.match(sql, /current_round = 0/);
-  assert.equal(cutoff, "2026-09-05T12:00:00.000Z");
+  assert.match(statements[0], /guest_expires_at IS NOT NULL/);
+  assert.match(statements[0], /guest_expires_at <= \?/);
+  assert.match(statements[0], /current_round = 0/);
+  assert.match(statements[1], /UPDATE players/);
+  assert.match(statements[1], /current_round > 0/);
+  assert.match(statements[2], /DELETE FROM player_sessions/);
+  assert.match(statements[3], /DELETE FROM guest_tokens/);
+  assert.deepEqual(cutoffs, Array(4).fill("2026-09-05T12:00:00.000Z"));
 });
 
 test("keeps library and tournament payloads separated", async () => {
@@ -79,7 +83,7 @@ test("keeps library and tournament payloads separated", async () => {
 
   assert.match(managerRoute, /const selectedId = tournamentId \|\| null/);
   assert.match(managerRoute, /isSuperadmin\(viewerEmail\) && !selectedId/);
-  assert.match(managerRoute, /UPDATE players SET guest_expires_at = NULL/);
+  assert.match(managerRoute, /SET withdrawn = 1, checked_in = 0,[\s\S]*guest_expires_at = \?/);
   assert.match(managerRoute, /const rowsPerStatement = 12/);
   assert.match(worker, /scheduled\(/);
   assert.match(wrangler, /"crons": \["17 \* \* \* \*"\]/);

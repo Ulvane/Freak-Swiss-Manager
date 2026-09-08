@@ -29,8 +29,10 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { QrCode as QrCodeImage } from "@/components/qr-code";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -147,6 +149,8 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   const [showLibrary, setShowLibrary] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [protestOpen, setProtestOpen] = useState(false);
   const [moderatorRedeemOpen, setModeratorRedeemOpen] = useState(false);
   const [moderatorTokenInput, setModeratorTokenInput] = useState("");
   const [moderatorInviteOpen, setModeratorInviteOpen] = useState(false);
@@ -196,12 +200,19 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   }, []);
 
   useEffect(() => {
-    const tournamentId = new URLSearchParams(window.location.search).get("t");
-    const timer = window.setTimeout(() => {
+    const syncFromUrl = () => {
+      const tournamentId = new URLSearchParams(window.location.search).get("t");
       setShowLibrary(!tournamentId);
       void load(tournamentId);
+    };
+    const timer = window.setTimeout(() => {
+      syncFromUrl();
     }, 0);
-    return () => window.clearTimeout(timer);
+    window.addEventListener("popstate", syncFromUrl);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("popstate", syncFromUrl);
+    };
   }, [load]);
 
   const mutate = useCallback(
@@ -399,13 +410,15 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   }
 
   async function chooseTournament(tournamentId: string) {
-    window.history.replaceState({}, "", `?t=${tournamentId}`);
+    window.history.pushState({}, "", `?t=${encodeURIComponent(tournamentId)}`);
     setShowLibrary(false);
     await load(tournamentId);
   }
 
   async function openLibrary() {
-    window.history.replaceState({}, "", window.location.pathname);
+    if (window.location.search) {
+      window.history.pushState({}, "", window.location.pathname);
+    }
     await load();
     setShowLibrary(true);
   }
@@ -601,11 +614,25 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
 
       <section className="workspace">
         <header className="topbar">
-          <button className="wordmark wordmark-button" type="button" onClick={openLibrary}>
+          <Link
+            className="wordmark wordmark-button"
+            href="/"
+            onClick={(event) => {
+              event.preventDefault();
+              void openLibrary();
+            }}
+          >
             Freak<span>Swiss</span> Manager
-          </button>
+          </Link>
           <div className="topbar-meta">
             <span className="beta-tag">OPEN BETA</span>
+            <button
+              className="protest-button"
+              type="button"
+              onClick={() => setProtestOpen(true)}
+            >
+              PROTEST
+            </button>
             <a className="text-link audit-link" href="/benchmark">
               <FlaskConical /> Pairing audit
             </a>
@@ -635,6 +662,13 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
             )}
           </div>
         </header>
+
+        <ProtestDialog open={protestOpen} onOpenChange={setProtestOpen} />
+        <TournamentQrDialog
+          open={qrOpen}
+          onOpenChange={setQrOpen}
+          joinCode={tournament?.joinCode ?? ""}
+        />
 
         {showLibrary || !snapshot ? (
           <TournamentLibrary
@@ -681,6 +715,12 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
               mutate(
                 { action: "delete_guest", tournamentId: guest.tournamentId, playerId: guest.playerId },
                 `${guest.name} deleted`,
+              )
+            }
+            onBulkDeleteGuests={(guests) =>
+              mutate(
+                { action: "bulk_delete_guests", playerIds: guests.map((guest) => guest.playerId) },
+                `${guests.length} guest entr${guests.length === 1 ? "y" : "ies"} removed`,
               )
             }
             onRevokeModeratorToken={(tokenId) =>
@@ -875,6 +915,9 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                   <Button variant="outline" onClick={copyJoinCode} disabled={!tournament?.joinCode}>
                     <Copy /> Copy code
                   </Button>
+                  <Button variant="outline" onClick={() => setQrOpen(true)} disabled={!tournament?.joinCode}>
+                    <span className="qr-button-mark" aria-hidden="true">QR</span> QR code
+                  </Button>
                   <Button
                     variant="outline"
                     disabled={working || Boolean(tournament?.currentRound)}
@@ -974,42 +1017,79 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
               </section>
             ) : null}
 
-            {snapshot.canEdit && (
-              <section className="moderator-strip" aria-label="Tournament moderators">
+            {snapshot && (
+              <section className="moderator-strip" aria-label="Tournament staff">
                 <div>
-                  <span className="section-code">TOURNAMENT MODERATORS</span>
-                  <strong>
-                    {snapshot.viewerRole === "moderator"
-                      ? "Global moderator access"
-                      : snapshot.moderators.length
-                      ? `${snapshot.moderators.length} assigned`
-                      : "No delegated moderators"}
-                  </strong>
-                </div>
-                <div className="moderator-chip-list">
-                  {snapshot.moderators.map((moderator) => (
-                    <span className="moderator-chip" key={moderator.email}>
-                      <ShieldCheck /> {moderator.displayName}
-                      {snapshot.canRemoveModerators && (
-                        <button
-                          type="button"
-                          aria-label={`Remove ${moderator.displayName} from this tournament`}
-                          onClick={() =>
-                            mutate(
-                              {
-                                action: "remove_tournament_moderator",
-                                tournamentId: tournament?.id,
-                                email: moderator.email,
-                              },
-                              `${moderator.displayName} removed from tournament`,
-                            )
-                          }
-                        >
-                          <UserX />
-                        </button>
-                      )}
+                  <span className="section-code">TOURNAMENT STAFF</span>
+                  <div className="staff-line">
+                    <strong>Organizer</strong>
+                    <span>{snapshot.organizerName ?? "Unknown"}</span>
+                  </div>
+                  <div className="staff-line">
+                    <strong>Moderators</strong>
+                    <span>
+                      {snapshot.moderators.length
+                        ? snapshot.moderators.map((moderator) => moderator.displayName).join(", ")
+                        : "None delegated"}
                     </span>
-                  ))}
+                  </div>
+                </div>
+                <div className="moderator-strip-actions">
+                  {snapshot.canJoinDelegation && (
+                    <Button
+                      variant="outline"
+                      disabled={working}
+                      onClick={() =>
+                        mutate(
+                          { action: "join_tournament_delegation", tournamentId: tournament?.id },
+                          "Joined tournament delegation",
+                        )
+                      }
+                    >
+                      <ShieldCheck /> Join delegation
+                    </Button>
+                  )}
+                  {snapshot.canLeaveDelegation && (
+                    <Button
+                      variant="outline"
+                      disabled={working}
+                      onClick={() =>
+                        mutate(
+                          { action: "leave_tournament_delegation", tournamentId: tournament?.id },
+                          "Left tournament delegation",
+                        )
+                      }
+                    >
+                      <UserX /> Leave delegation
+                    </Button>
+                  )}
+                  {snapshot.canEdit && snapshot.moderators.length > 0 && (
+                    <div className="moderator-chip-list">
+                      {snapshot.moderators.map((moderator) => (
+                        <span className="moderator-chip" key={moderator.email}>
+                          <ShieldCheck /> {moderator.displayName}
+                          {snapshot.canRemoveModerators && (
+                            <button
+                              type="button"
+                              aria-label={`Remove ${moderator.displayName} from this tournament`}
+                              onClick={() =>
+                                mutate(
+                                  {
+                                    action: "remove_tournament_moderator",
+                                    tournamentId: tournament?.id,
+                                    email: moderator.email,
+                                  },
+                                  `${moderator.displayName} removed from tournament`,
+                                )
+                              }
+                            >
+                              <UserX />
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </section>
             )}
@@ -1871,6 +1951,90 @@ function PairingsTable({
   );
 }
 
+function ProtestDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="protest-dialog">
+        <DialogHeader>
+          <p className="section-code">FREE / OPEN / PROTEST</p>
+          <DialogTitle>A protest for free pairing.</DialogTitle>
+          <DialogDescription>
+            A clear position from Freak Swiss Manager.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="protest-copy">
+          <p className="protest-impact">PAIRING SHOULD BE FREE.</p>
+          <p className="protest-impact">DO NOT DEMAND UNNECESSARY MONEY.</p>
+          <p className="protest-impact protest-impact-dark">
+            WE DO NOT RESPECT PAYWALLS FOR BASIC PAIRING.
+          </p>
+          <p>
+            Freak Swiss Manager is for informal, unrated coffee-shop, club,
+            friend and community tournaments. It is not intended for official
+            FIDE-rated events.
+          </p>
+          <p>
+            I also protest those who have written this basic task using AI or
+            vibe coding but still demand unnecessary money from people.
+          </p>
+          <p className="protest-close">Use it and share it without paying for basic pairing.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TournamentQrDialog({
+  open,
+  onOpenChange,
+  joinCode,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  joinCode: string;
+}) {
+  const joinUrl = typeof window === "undefined"
+    ? `/guest/join?code=${encodeURIComponent(joinCode)}`
+    : `${window.location.origin}/guest/join?code=${encodeURIComponent(joinCode)}`;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="qr-dialog">
+        <DialogHeader>
+          <p className="section-code">PLAYER / QR ACCESS</p>
+          <DialogTitle>Scan to join.</DialogTitle>
+          <DialogDescription>
+            Players can scan this code with their phone camera to open the tournament entry page.
+          </DialogDescription>
+        </DialogHeader>
+        {joinCode ? (
+          <div className="qr-dialog-body">
+            <QrCodeImage value={joinUrl} label={`QR code for tournament ${joinCode}`} />
+            <div className="qr-join-code">
+              <span>PLAYER JOIN CODE</span>
+              <strong>{joinCode}</strong>
+            </div>
+          </div>
+        ) : (
+          <p className="qr-empty">No join code is available for this tournament.</p>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function TournamentLibrary({
   payload,
   createOpen,
@@ -1891,6 +2055,7 @@ function TournamentLibrary({
   onKickGuest,
   onRevokeGuestAccess,
   onDeleteGuest,
+  onBulkDeleteGuests,
   onRevokeModeratorToken,
   onDeleteModeratorToken,
   onCreateTestTournament,
@@ -1928,6 +2093,7 @@ function TournamentLibrary({
   onKickGuest: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
   onRevokeGuestAccess: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
   onDeleteGuest: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
+  onBulkDeleteGuests: (guests: ManagerPayload["guests"]) => void | Promise<boolean>;
   onRevokeModeratorToken: (tokenId: string) => void | Promise<boolean>;
   onDeleteModeratorToken: (tokenId: string) => void | Promise<boolean>;
   onCreateTestTournament: () => void | Promise<boolean>;
@@ -1939,7 +2105,7 @@ function TournamentLibrary({
       <section className="library-heading">
         <div>
           <p className="section-code">FREE / OPEN / ACCOUNT-SYNCED</p>
-          <h1>Your tournament<br />library.</h1>
+          <h1>Free tournament<br />control.</h1>
         </div>
         <div className="library-intro">
           <p>
@@ -2017,6 +2183,7 @@ function TournamentLibrary({
           onKickGuest={onKickGuest}
           onRevokeGuestAccess={onRevokeGuestAccess}
           onDeleteGuest={onDeleteGuest}
+          onBulkDeleteGuests={onBulkDeleteGuests}
           onRevokeToken={onRevokeModeratorToken}
           onDeleteToken={onDeleteModeratorToken}
           onCreateTestTournament={onCreateTestTournament}
@@ -2135,11 +2302,15 @@ function TournamentCard({
         <Button variant="outline" onClick={() => void onOpen(item.id)}>
           {item.role === "visitor" ? "View" : "Open desk"} <ArrowRight />
         </Button>
-        {onJoin && (
-          <Button onClick={() => onJoin(item)}>
+        {onJoin ? (
+          <Button className="tournament-join-button" onClick={() => onJoin(item)}>
             <UserPlus /> Join
           </Button>
-        )}
+        ) : item.role === "player" ? (
+          <Button className="tournament-joined-button" disabled>
+            <UserCheck /> Joined
+          </Button>
+        ) : null}
         {item.role === "superadmin" && onDelete && (
           <DeleteTournamentDialog
             tournament={item}
@@ -2162,6 +2333,7 @@ function SuperadminDirectory({
   onKickGuest,
   onRevokeGuestAccess,
   onDeleteGuest,
+  onBulkDeleteGuests,
   onRevokeToken,
   onDeleteToken,
   onCreateTestTournament,
@@ -2177,6 +2349,7 @@ function SuperadminDirectory({
   onKickGuest: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
   onRevokeGuestAccess: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
   onDeleteGuest: (guest: ManagerPayload["guests"][number]) => void | Promise<boolean>;
+  onBulkDeleteGuests: (guests: ManagerPayload["guests"]) => void | Promise<boolean>;
   onRevokeToken: (tokenId: string) => void | Promise<boolean>;
   onDeleteToken: (tokenId: string) => void | Promise<boolean>;
   onCreateTestTournament: () => void | Promise<boolean>;
@@ -2184,6 +2357,21 @@ function SuperadminDirectory({
 }) {
   const now = new Date(payload.serverTime).getTime();
   const activeBans = payload.accounts.filter((account) => account.isBanned).length;
+  const [selectedGuestIds, setSelectedGuestIds] = useState<string[]>([]);
+  const selectedGuests = payload.guests.filter((guest) => selectedGuestIds.includes(guest.playerId));
+  const allGuestsSelected = payload.guests.length > 0 && selectedGuests.length === payload.guests.length;
+
+  function toggleGuestSelection(playerId: string) {
+    setSelectedGuestIds((current) =>
+      current.includes(playerId)
+        ? current.filter((id) => id !== playerId)
+        : [...current, playerId],
+    );
+  }
+
+  function toggleAllGuests() {
+    setSelectedGuestIds(allGuestsSelected ? [] : payload.guests.map((guest) => guest.playerId));
+  }
 
   function tokenStatus(token: ManagerPayload["moderatorTokens"][number]) {
     if (token.usedAt) return "used" as const;
@@ -2379,15 +2567,48 @@ function SuperadminDirectory({
 
         <TabsContent value="guests" className="admin-tab-panel">
           <div className="admin-directory-table">
-            <h3>Guest entries</h3>
+            <div className="guest-directory-heading">
+              <div>
+                <h3>Guest entries</h3>
+                <p>{payload.guests.length} active guest record(s)</p>
+              </div>
+              {payload.guests.length > 0 && (
+                <div className="directory-row-actions">
+                  <Button variant="outline" size="sm" disabled={working} onClick={toggleAllGuests}>
+                    {allGuestsSelected ? "Clear selection" : "Select all"}
+                  </Button>
+                  {selectedGuests.length > 0 && (
+                    <DangerConfirmDialog
+                      triggerLabel={`Delete ${selectedGuests.length} selected`}
+                      title={`Delete ${selectedGuests.length} guest entr${selectedGuests.length === 1 ? "y" : "ies"}?`}
+                      description="Unpaired guests are deleted. Guests with pairing history are removed from future play and access, while their historical standings and pairings remain."
+                      working={working}
+                      onConfirm={async () => {
+                        const deleted = await onBulkDeleteGuests(selectedGuests);
+                        if (deleted) setSelectedGuestIds([]);
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
             {payload.guests.length ? payload.guests.map((guest) => (
-              <div className="directory-row" key={`${guest.tournamentId}:${guest.playerId}`}>
-                <span>
-                  <strong>{guest.name} · {guest.tournamentName}</strong>
-                  <small>
-                    FIDE {guest.fideId || "—"} · {guest.rating} rating · {guest.withdrawn ? "Kicked / withdrawn" : "Active guest"} · joined {compactDate(guest.createdAt)}
-                  </small>
-                </span>
+              <div className="directory-row guest-directory-row" key={`${guest.tournamentId}:${guest.playerId}`}>
+                <div className="guest-row-main">
+                  <input
+                    className="guest-select"
+                    type="checkbox"
+                    aria-label={`Select ${guest.name} from ${guest.tournamentName}`}
+                    checked={selectedGuestIds.includes(guest.playerId)}
+                    onChange={() => toggleGuestSelection(guest.playerId)}
+                  />
+                  <span>
+                    <strong>{guest.name} · {guest.tournamentName}</strong>
+                    <small>
+                      FIDE {guest.fideId || "—"} · {guest.rating} rating · {guest.withdrawn ? "Kicked / withdrawn" : "Active guest"} · joined {compactDate(guest.createdAt)}
+                    </small>
+                  </span>
+                </div>
                 <div className="directory-row-actions">
                   {!guest.withdrawn && (
                     <DangerConfirmDialog
@@ -2408,7 +2629,7 @@ function SuperadminDirectory({
                   <DangerConfirmDialog
                     triggerLabel="Delete"
                     title={`Delete ${guest.name}'s guest entry?`}
-                    description="This removes the guest entry only if pairing history has not started."
+                    description="Unpaired entries are deleted. If pairing history exists, the guest is removed from future play and access while standings and pairings remain."
                     working={working}
                     onConfirm={() => onDeleteGuest(guest)}
                   />

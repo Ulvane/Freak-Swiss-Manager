@@ -147,6 +147,9 @@ export type TournamentSnapshot = {
   canDeleteRound: boolean;
   canInviteModerators: boolean;
   canRemoveModerators: boolean;
+  organizerName: string | null;
+  canJoinDelegation: boolean;
+  canLeaveDelegation: boolean;
   canManageCheckIn: boolean;
   canChangeVisibility: boolean;
   canArchiveTournament: boolean;
