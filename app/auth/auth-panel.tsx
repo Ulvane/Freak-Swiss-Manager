@@ -102,7 +102,7 @@ export function AuthPanel({ returnTo }: { returnTo: string }) {
           <form className="auth-form" onSubmit={submit}>
             {mode === "register" && (
               <label>
-                Display name
+                Name Surname
                 <input name="displayName" autoComplete="name" maxLength={80} required />
               </label>
             )}

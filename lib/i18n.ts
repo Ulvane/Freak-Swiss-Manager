@@ -15,7 +15,7 @@ const exactTranslations: Record<string, string> = {
   "Create an organizer account to run your own tournaments. Players join tournaments by code without an account; moderator access is still granted with a single-use token.": "Kendi turnuvalarınızı yönetmek için bir organizatör hesabı oluşturun. Oyuncular hesap açmadan kodla turnuvalara katılabilir; moderatör erişimi tek kullanımlık bir jetonla verilir.",
   "Sign in": "Giriş yap",
   "Register": "Kayıt ol",
-  "Display name": "Görünen ad",
+  "Name Surname": "Ad Soyad",
   "Email": "E-posta",
   "Password": "Şifre",
   "At least 10 characters.": "En az 10 karakter.",
