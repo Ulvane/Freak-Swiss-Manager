@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { ArrowLeft, ArrowRight, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggles } from "@/components/theme-toggles";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 type Mode = "login" | "register";
 
@@ -41,9 +42,7 @@ export function AuthPanel({ returnTo }: { returnTo: string }) {
         return;
       }
 
-      const safeReturnTo =
-        returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/";
-      window.location.assign(safeReturnTo);
+      window.location.assign(safeReturnPath(returnTo));
     } catch {
       setError("Unable to reach the server. Check your connection and try again.");
     } finally {
@@ -60,7 +59,7 @@ export function AuthPanel({ returnTo }: { returnTo: string }) {
       </aside>
 
       <section className="auth-stage">
-        <Link className="auth-back" href={returnTo}>
+        <Link className="auth-back" href={safeReturnPath(returnTo)}>
           <ArrowLeft /> Back to tournaments
         </Link>
         <div className="auth-card">

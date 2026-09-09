@@ -7,6 +7,7 @@ import {
   verifyPassword,
 } from "@/app/auth-server";
 import { getDatabase } from "@/db/raw";
+import { readJsonRequest } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
@@ -17,12 +18,15 @@ type LoginBody = {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => null)) as LoginBody | null;
+    const parsed = await readJsonRequest(request);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as LoginBody;
     if (!body) {
       return Response.json({ error: "Invalid request." }, { status: 400 });
     }
     const email = normalizeEmail(body.email || "");
-    const password = body.password || "";
+    const password = typeof body.password === "string" ? body.password : "";
+    if (password.length > 128) return Response.json({ error: "Invalid password length." }, { status: 400 });
     if (!isValidEmail(email) || !password) {
       return invalidLogin();
     }
@@ -44,24 +48,24 @@ export async function POST(request: Request) {
     }
 
     const database = getDatabase();
+    // Reserve an attempt atomically before checking the password. Concurrent
+    // requests must not all read and overwrite the same failed-attempt count.
+    const attempt = await database.prepare(
+      `UPDATE auth_credentials
+       SET failed_attempts = CASE WHEN locked_until <= ? THEN 1 ELSE failed_attempts + 1 END,
+           locked_until = CASE
+             WHEN (CASE WHEN locked_until <= ? THEN 0 ELSE failed_attempts END) + 1 >= 7
+             THEN ? ELSE NULL END,
+           updated_at = ?
+       WHERE email = ? AND (locked_until IS NULL OR locked_until <= ?)
+       RETURNING email`,
+    ).bind(now.toISOString(), now.toISOString(),
+      new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+      now.toISOString(), email, now.toISOString()).first<{ email: string }>();
+    if (!attempt) {
+      return Response.json({ error: "Too many attempts. Try again in 15 minutes." }, { status: 429 });
+    }
     if (!(await verifyPassword(password, credential))) {
-      const nextFailures = Number(credential.failedAttempts) + 1;
-      const lockAccount = nextFailures >= 7;
-      await database
-        .prepare(
-          `UPDATE auth_credentials
-           SET failed_attempts = ?, locked_until = ?, updated_at = ?
-           WHERE email = ?`,
-        )
-        .bind(
-          lockAccount ? 0 : nextFailures,
-          lockAccount
-            ? new Date(now.getTime() + 15 * 60 * 1000).toISOString()
-            : null,
-          now.toISOString(),
-          email,
-        )
-        .run();
       return invalidLogin();
     }
 

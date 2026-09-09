@@ -1,12 +1,14 @@
 import {
   createPasswordRecord,
   createSession,
+  isSuperadmin,
   isValidEmail,
   normalizeEmail,
   passwordValidationError,
   sessionCookie,
 } from "@/app/auth-server";
 import { getDatabase } from "@/db/raw";
+import { readJsonRequest } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
@@ -18,13 +20,15 @@ type RegistrationBody = {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => null)) as RegistrationBody | null;
+    const parsed = await readJsonRequest(request);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as RegistrationBody;
     if (!body) {
       return Response.json({ error: "Invalid request." }, { status: 400 });
     }
     const email = normalizeEmail(body.email || "");
-    const displayName = (body.displayName || "").trim().slice(0, 80);
-    const password = body.password || "";
+    const displayName = typeof body.displayName === "string" ? body.displayName.trim().slice(0, 80) : "";
+    const password = typeof body.password === "string" ? body.password : "";
 
     if (!displayName) {
       return Response.json({ error: "Enter your name." }, { status: 400 });
@@ -36,15 +40,24 @@ export async function POST(request: Request) {
     if (passwordError) {
       return Response.json({ error: passwordError }, { status: 400 });
     }
+    // Provision the intended account before assigning SUPERADMIN_EMAIL. Never
+    // allow public signup to bootstrap a privileged identity by email alone.
+    if (isSuperadmin(email)) {
+      return Response.json({ error: "This account must be provisioned by the site administrator." }, { status: 403 });
+    }
 
     const database = getDatabase();
     const existing = await database
-      .prepare(`SELECT email FROM auth_credentials WHERE email = ?`)
-      .bind(email)
+      .prepare(`SELECT email FROM user_accounts WHERE email = ?
+                UNION ALL SELECT email FROM moderators WHERE email = ?
+                UNION ALL SELECT owner_email AS email FROM tournaments WHERE owner_email = ?
+                UNION ALL SELECT moderator_email AS email FROM tournament_moderators WHERE moderator_email = ?
+                LIMIT 1`)
+      .bind(email, email, email, email)
       .first<{ email: string }>();
     if (existing) {
       return Response.json(
-        { error: "An account already exists for this email. Sign in instead." },
+        { error: "This account already exists. Sign in or contact the site administrator for recovery." },
         { status: 409 },
       );
     }
@@ -55,10 +68,7 @@ export async function POST(request: Request) {
       database
         .prepare(
           `INSERT INTO user_accounts (email, display_name, created_at, last_seen_at)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(email) DO UPDATE SET
-             display_name = excluded.display_name,
-             last_seen_at = excluded.last_seen_at`,
+           VALUES (?, ?, ?, ?)`,
         )
         .bind(email, displayName, now, now),
       database
@@ -90,7 +100,7 @@ export async function POST(request: Request) {
       kind: message.includes("no such table") ? "database_schema" : "runtime",
       message,
     });
-    if (message.includes("UNIQUE constraint failed") && message.includes("auth_credentials")) {
+    if (message.includes("UNIQUE constraint failed") && (message.includes("auth_credentials") || message.includes("user_accounts"))) {
       return Response.json(
         { error: "An account already exists for this email. Sign in instead." },
         { status: 409 },

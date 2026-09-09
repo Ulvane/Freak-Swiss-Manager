@@ -2,6 +2,7 @@ import { getDatabase } from "@/db/raw";
 import { guestExpiryFrom } from "@/lib/guest-players";
 import { createGuestToken } from "@/lib/guest-tokens";
 import { findPlayerByFideId, normalizeFideId } from "@/lib/player-registration";
+import { readJsonRequest, registrationConflict } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +30,9 @@ function cleanText(value: unknown, maxLength: number) {
 // user_accounts row.
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => null)) as GuestJoinBody | null;
+    const parsed = await readJsonRequest(request);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as GuestJoinBody;
     if (!body) {
       return Response.json({ error: "Invalid request." }, { status: 400 });
     }
@@ -119,7 +122,9 @@ export async function POST(request: Request) {
       },
       { status: 201 },
     );
-  } catch {
+  } catch (error) {
+    const conflict = registrationConflict(error);
+    if (conflict) return conflict;
     return Response.json(
       { error: "Unable to join the tournament right now." },
       { status: 500 },

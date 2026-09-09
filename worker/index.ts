@@ -4,8 +4,9 @@ import handler from "vinext/server/app-router-entry";
 
 import { cleanupExpiredGuestPlayers } from "../lib/guest-players";
 import { cleanupExpiredPlayerSessions } from "../lib/player-session";
+import { guardApiRequest, withSecurityHeaders, type SecurityBindings } from "../lib/edge-security";
 
-interface Env {
+interface Env extends SecurityBindings {
   ASSETS: Fetcher;
   DB: D1Database;
   IMAGES: {
@@ -31,19 +32,22 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const rejected = await guardApiRequest(request, env);
+    if (rejected) return withSecurityHeaders(request, rejected);
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
-      return handleImageOptimization(request, {
+      const response = await handleImageOptimization(request, {
         fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
         transformImage: async (body, { width, format, quality }) => {
           const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
           return result.response();
         },
       }, allowedWidths);
+      return withSecurityHeaders(request, response);
     }
 
-    return handler.fetch(request, env, ctx);
+    return withSecurityHeaders(request, await handler.fetch(request, env, ctx));
   },
 
   scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {

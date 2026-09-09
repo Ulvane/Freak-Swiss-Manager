@@ -125,13 +125,45 @@ keep withdrawal separate from a one-round skip and preserve historical games.
 Register the intended account first, then set the runtime variable
 `SUPERADMIN_EMAIL` to that account's exact email address. Superadmin access is
 granted whenever the signed-in email matches this Cloudflare variable. Public
-registration does not verify email ownership, so do not assign an address that
-has not already been registered by its owner.
+registration does not verify email ownership. Verify the intended person's
+identity before granting a role. Once configured, the superadmin address cannot
+be created through public signup. Existing identities, including legacy records
+without password credentials, cannot be reclaimed by registering their email.
 
 Upgrades from the earlier 210,000-iteration password build remove only those
-incompatible password records. If that affects an account, register the same
-email again to create a Cloudflare-compatible credential; its account and
-tournament data remain intact.
+incompatible password records. If that affected an account, public registration
+is no longer an account-recovery method. The site operator must verify ownership
+and restore credentials through a trusted administrative process. Do not delete
+the account or its role/ownership records to work around the registration guard.
+
+## Security changes (September 2026)
+
+Deploy migration `0012_roster_security_guards.sql` before the updated Worker.
+It enforces roster capacity and nonempty FIDE-ID uniqueness atomically for new
+entries across both guest registration endpoints; it preserves existing data.
+The normal `npm run deploy` migration step applies it automatically.
+
+The Worker now requires the three `ratelimits` bindings in `wrangler.jsonc`.
+They limit authentication to 60 requests/minute, other writes to 300/minute and
+API reads to 1,200/minute per connecting IP, per Cloudflare location. These are
+abuse limits, not billing caps. Shared tournament Wi-Fi may need adjusted limits.
+The database separately enforces seven login attempts before a 15-minute lockout,
+including simultaneous attempts. JSON request bodies are capped at 64 KiB.
+
+Browser mutations require a matching origin and JSON content type, except the
+same-origin logout form. Logout uses POST; API GET requests never sign users out.
+Sensitive responses are marked private/no-store. Framing is disabled, and return
+URLs are normalized to paths on this site.
+
+The security dependency refresh includes Next.js 16.3.4, React 19.2.8 and Vinext
+1.0.0-beta.9 (which removes the vulnerable image-size dependency). The scoped
+esbuild override patches Drizzle's legacy loader; the Sharp 0.35.4 override
+patches Miniflare's pinned image dependency. Keep the lockfile committed and
+run `npm audit`, `npm run lint` and `npm test` when updating these dependencies.
+
+Private tournaments are unlisted, not restricted to authenticated members: a
+holder of the link or join code can access them. This is the existing product
+behavior. Do not use those links to store confidential player information.
 
 Never commit passwords, setup secrets, moderator tokens or live account data.
 

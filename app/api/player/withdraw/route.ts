@@ -1,6 +1,7 @@
 import { getAuthenticatedUser, normalizeEmail } from "@/app/auth-server";
 import { getDatabase } from "@/db/raw";
 import { verifyGuestToken } from "@/lib/guest-tokens";
+import { readJsonRequest } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,9 @@ function cleanText(value: unknown, maxLength: number) {
 // pending future-round statuses are cleared.
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => null)) as WithdrawBody | null;
+    const parsed = await readJsonRequest(request);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as WithdrawBody;
     if (!body || body.confirm !== true) {
       return Response.json(
         { error: "Confirm withdrawal to continue." },

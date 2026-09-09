@@ -129,8 +129,8 @@ async function tournament(ownerCookie, name) {
 }
 
 test("superadmin-issued moderator tokens are targeted, single-use, and global", async () => {
-  process.env.SUPERADMIN_EMAIL = "token-owner@example.test";
   const owner = await account("token-owner");
+  process.env.SUPERADMIN_EMAIL = owner.email;
   const moderator = await account("token-moderator");
   const stranger = await account("token-stranger");
   const controlled = await tournament(owner.cookie, "Controlled event");
@@ -209,8 +209,8 @@ test("superadmin-issued moderator tokens are targeted, single-use, and global", 
 });
 
 test("site moderation controls remain superadmin-only and are visible in the private directory", async () => {
-  process.env.SUPERADMIN_EMAIL = "controls-admin@example.test";
   const admin = await account("controls-admin");
+  process.env.SUPERADMIN_EMAIL = admin.email;
   const moderator = await account("controls-moderator");
   const member = await account("controls-member");
 

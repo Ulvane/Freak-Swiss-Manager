@@ -34,6 +34,7 @@ import {
   TEST_TOURNAMENT_SOURCE,
 } from "@/lib/test-tournament";
 import { isEnterableResult } from "@/lib/result-workflow";
+import { readJsonRequest, registrationConflict } from "@/lib/request-security";
 import type {
   AccountSummary,
   GuestSummary,
@@ -812,7 +813,9 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
 export async function GET(request: Request) {
   try {
     const tournamentId = new URL(request.url).searchParams.get("t");
-    return Response.json(await loadManagerPayload(request, tournamentId));
+    return Response.json(await loadManagerPayload(request, tournamentId), {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   } catch (error) {
     console.error("Tournament data load failed", error);
     return Response.json(
@@ -909,7 +912,9 @@ type ManagerAction =
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => null)) as ManagerAction | null;
+    const parsed = await readJsonRequest(request);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as ManagerAction;
     if (!body || typeof body.action !== "string") {
       return Response.json({ error: "Invalid request." }, { status: 400 });
     }
@@ -918,12 +923,21 @@ export async function POST(request: Request) {
     const database = getDatabase();
     const email = user ? normalizeEmail(user.email) : null;
     const suppliedPlayerToken = playerSessionTokenFromRequest(request);
-    const validSuppliedPlayerToken = isValidPlayerSessionToken(suppliedPlayerToken)
+    let validSuppliedPlayerToken = isValidPlayerSessionToken(suppliedPlayerToken)
       ? suppliedPlayerToken
       : null;
-    const suppliedPlayerTokenHash = validSuppliedPlayerToken
+    let suppliedPlayerTokenHash = validSuppliedPlayerToken
       ? await hashPlayerSessionToken(validSuppliedPlayerToken)
       : null;
+    if (suppliedPlayerTokenHash) {
+      const issued = await database.prepare(
+        `SELECT id FROM player_sessions WHERE token_hash = ? AND expires_at > ? LIMIT 1`,
+      ).bind(suppliedPlayerTokenHash, new Date().toISOString()).first<{ id: string }>();
+      if (!issued) {
+        validSuppliedPlayerToken = null;
+        suppliedPlayerTokenHash = null;
+      }
+    }
 
     if (body.action === "join_tournament") {
       const code = cleanText(body.joinCode, 12).toUpperCase();
@@ -2472,6 +2486,8 @@ export async function POST(request: Request) {
 
     return Response.json({ error: "Unsupported action." }, { status: 400 });
   } catch (error) {
+    const conflict = registrationConflict(error);
+    if (conflict) return conflict;
     console.error("Tournament action failed", error);
     return Response.json(
       { error: "The request could not be completed right now." },

@@ -744,9 +744,9 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                     : payload.viewerGlobalRole.toUpperCase()}
                 </span>
                 <span className="viewer-name">{payload.viewerName}</span>
-                <a className="text-link" href={signOutPath}>
-                  Sign out
-                </a>
+                <form action={signOutPath} method="post">
+                  <button className="text-link topbar-button" type="submit">Sign out</button>
+                </form>
               </>
             ) : (
               <a className="signin-link" href={signInPath} target="_top">

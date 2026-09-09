@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 
 import { getDatabase } from "@/db/raw";
+export { safeReturnPath } from "@/lib/safe-return-path";
 
 export type AppUser = {
   displayName: string;
@@ -23,12 +24,12 @@ type CredentialRow = {
 
 const encoder = new TextEncoder();
 
-export function normalizeEmail(email: string) {
-  return email.trim().toLowerCase();
+export function normalizeEmail(email: unknown) {
+  return typeof email === "string" ? email.trim().toLowerCase() : "";
 }
 
 export function isValidEmail(email: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
 }
 
 export function getSuperadminEmail() {
@@ -175,18 +176,6 @@ export function cookieValue(request: Request, name: string) {
     if (key === name) return value.join("=") || null;
   }
   return null;
-}
-
-export function safeReturnPath(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
-  try {
-    const url = new URL(value, "https://freak-swiss.invalid");
-    return url.origin === "https://freak-swiss.invalid"
-      ? `${url.pathname}${url.search}${url.hash}`
-      : "/";
-  } catch {
-    return "/";
-  }
 }
 
 export function constantTimeEqual(left: string, right: string) {

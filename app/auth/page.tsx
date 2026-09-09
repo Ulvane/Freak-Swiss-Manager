@@ -1,4 +1,5 @@
 import { AuthPanel } from "@/app/auth/auth-panel";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 export const dynamic = "force-dynamic";
 
@@ -8,5 +9,5 @@ type Props = {
 
 export default async function AuthPage({ searchParams }: Props) {
   const { returnTo } = await searchParams;
-  return <AuthPanel returnTo={returnTo || "/"} />;
+  return <AuthPanel returnTo={safeReturnPath(returnTo)} />;
 }

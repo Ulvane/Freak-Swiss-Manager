@@ -6,6 +6,11 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "keep_vars": true,
+  "ratelimits": [
+    { "name": "AUTH_RATE_LIMITER", "namespace_id": "92841001", "simple": { "limit": 60, "period": 60 } },
+    { "name": "WRITE_RATE_LIMITER", "namespace_id": "92841002", "simple": { "limit": 300, "period": 60 } },
+    { "name": "READ_RATE_LIMITER", "namespace_id": "92841003", "simple": { "limit": 1200, "period": 60 } }
+  ],
   "triggers": {
     "crons": ["17 * * * *"]
   },
