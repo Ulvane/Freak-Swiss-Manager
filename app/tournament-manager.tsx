@@ -1941,7 +1941,6 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
               <span>PAIRING METHOD / DUTCH-STYLE SCOREGROUPS</span>
               <span>ACCOUNT-SYNCED D1 STORAGE</span>
               <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-                <span>NOT FIDE-CERTIFIED</span>
                 <ThemeToggles />
               </div>
             </footer>

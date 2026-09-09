@@ -319,8 +319,7 @@ export default async function BenchmarkPage({
           <footer className="benchmark-footer">
             <p>
               Scope: all nine published Category C rounds, with each round&apos;s
-              not-paired players excluded. This is an engineering audit, not FIDE
-              certification.
+              not-paired players excluded. This is an engineering audit.
             </p>
             <div className="benchmark-footer-links">
               <a href={audit.sourceUrl} target="_blank" rel="noreferrer">
