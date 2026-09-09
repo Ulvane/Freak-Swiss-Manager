@@ -139,9 +139,9 @@ the account or its role/ownership records to work around the registration guard.
 ## Security changes (September 2026)
 
 Deploy migration `0012_roster_security_guards.sql` before the updated Worker.
-It enforces roster capacity and nonempty FIDE-ID uniqueness atomically for new
-entries across both guest registration endpoints; it preserves existing data.
-The normal `npm run deploy` migration step applies it automatically.
+It enforces roster capacity atomically for new entries across both guest registration
+endpoints; it preserves existing data. The normal `npm run deploy` migration step
+applies it automatically.
 
 The Worker now requires the three `ratelimits` bindings in `wrangler.jsonc`.
 They limit authentication to 60 requests/minute, other writes to 300/minute and
