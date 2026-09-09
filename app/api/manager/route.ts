@@ -672,14 +672,30 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
       .all<RawTournamentSummary>();
     const knownIds = new Set(tournaments.map((item) => item.id));
     for (const row of (sessionRows.results ?? []) as RawTournamentSummary[]) {
-      if (knownIds.has(row.id)) continue;
+      if (knownIds.has(row.id)) {
+        tournaments.find((item) => item.id === row.id)!.hasJoined = true;
+        continue;
+      }
       tournaments.push({
         ...publicTournament(row),
         joinCode: null,
         playerCount: Number(row.playerCount),
         role: "player",
+        hasJoined: true,
       });
     }
+  }
+
+  if (viewerEmail) {
+    const memberships = await database
+      .prepare(`SELECT DISTINCT tournament_id AS tournamentId FROM players WHERE account_email = ?`)
+      .bind(viewerEmail)
+      .all<{ tournamentId: string }>();
+    const joinedIds = new Set((memberships.results ?? []).map((row) => row.tournamentId));
+    tournaments = tournaments.map((item) => ({
+      ...item,
+      hasJoined: Boolean(item.hasJoined || joinedIds.has(item.id)),
+    }));
   }
 
   const selectedId = tournamentId || null;
@@ -714,6 +730,7 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
           joinCode: null,
           playerCount: Number(row.playerCount),
           role: personal?.role ?? ("visitor" as const),
+          hasJoined: personal?.hasJoined ?? false,
         };
       });
     communityTournaments = ((communityRows.results ?? []) as RawTournamentSummary[])
@@ -724,6 +741,7 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
           joinCode: null,
           playerCount: Number(row.playerCount),
           role: personal?.role ?? ("visitor" as const),
+          hasJoined: personal?.hasJoined ?? false,
         };
       });
   }

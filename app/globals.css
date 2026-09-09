@@ -519,9 +519,14 @@ a {
 }
 
 .role-moderator {
-  border-color: var(--ink);
+  border-color: #f2b705;
   background: #f2b705;
-  color: var(--ink);
+  color: #fff;
+}
+
+:root[data-mode="dark"] .role-moderator {
+  color: #11110f;
+  border-color: #11110f;
 }
 
 .role-player {

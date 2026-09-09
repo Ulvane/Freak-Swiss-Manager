@@ -27,6 +27,7 @@ export type Tournament = {
 
 export type TournamentSummary = Tournament & {
   playerCount: number;
+  hasJoined?: boolean;
   role: "superadmin" | "moderator" | "organizer" | "player" | "visitor";
 };
 

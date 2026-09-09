@@ -2391,13 +2391,13 @@ function TournamentCard({
         <Button variant="outline" onClick={() => void onOpen(item.id)}>
           {item.role === "visitor" ? "View" : "Open desk"} <ArrowRight />
         </Button>
-        {onJoin ? (
-          <Button className="tournament-join-button" onClick={() => onJoin(item)}>
-            <UserPlus /> Join
-          </Button>
-        ) : item.role === "player" ? (
+        {item.hasJoined || item.role === "player" ? (
           <Button className="tournament-joined-button" disabled>
             <UserCheck /> Joined
+          </Button>
+        ) : onJoin ? (
+          <Button className="tournament-join-button" onClick={() => onJoin(item)}>
+            <UserPlus /> Join
           </Button>
         ) : null}
         {item.role === "superadmin" && onDelete && (
