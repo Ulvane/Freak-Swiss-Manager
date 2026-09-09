@@ -50,8 +50,5 @@ export function registrationConflict(error: unknown) {
   if (message.includes("roster_capacity_exceeded")) {
     return Response.json({ error: "Tournament is full (player limit reached)." }, { status: 409 });
   }
-  if (message.includes("roster_fide_conflict")) {
-    return Response.json({ error: "A player with this FIDE ID is already registered." }, { status: 409 });
-  }
   return null;
 }

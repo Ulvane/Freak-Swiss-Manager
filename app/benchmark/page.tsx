@@ -258,7 +258,7 @@ export default async function BenchmarkPage({
             <div className="benchmark-table-wrap">
               <table className="benchmark-table roster-table">
                 <thead>
-                  <tr><th>Seed</th><th>Player</th><th>FIDE ID</th><th>Rating</th><th>Round {round}</th></tr>
+                  <tr><th>Seed</th><th>Player</th><th>Rating</th><th>Round {round}</th></tr>
                 </thead>
                 <tbody>
                   {MALATYA_C_PLAYERS.map((player) => {
@@ -279,7 +279,6 @@ export default async function BenchmarkPage({
                       <tr key={player.seed}>
                         <td className="board-cell">{String(player.seed).padStart(3, "0")}</td>
                         <td className="player-name-cell">{player.name}</td>
-                        <td>{player.fideId}</td>
                         <td>{hasRating ? player.rating : "—"}</td>
                         <td>
                           <span className={`roster-state roster-${stateClass}`}>

@@ -46,7 +46,6 @@ export function GuestJoinPanel({ prefillCode }: { prefillCode: string }) {
         body: JSON.stringify({
           joinCode: String(data.get("joinCode") || ""),
           name: playerName,
-          fideId: String(data.get("fideId") || ""),
           rating: Number(data.get("rating") || 0),
         }),
       });
@@ -138,10 +137,6 @@ export function GuestJoinPanel({ prefillCode }: { prefillCode: string }) {
               <label>
                 Name
                 <input name="name" autoComplete="name" maxLength={100} required />
-              </label>
-              <label>
-                FIDE ID (optional)
-                <input name="fideId" maxLength={24} />
               </label>
               <label>
                 Rating

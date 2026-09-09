@@ -262,38 +262,16 @@ test("site moderation controls remain superadmin-only and are visible in the pri
   assert.ok(publicDirectory.data.publicStaff.every((entry) => !Object.hasOwn(entry, "email")));
 });
 
-test("all registration paths reject duplicate FIDE IDs while allowing real name collisions", async () => {
+test("real name collisions are permitted across registration paths", async () => {
   const owner = await account("duplicate-owner");
   const event = await tournament(owner.cookie, "Duplicate rules event");
   const first = await post(manager, {
     action: "join_tournament",
     joinCode: event.join_code,
     name: "Alex Example",
-    fideId: " 12345678 ",
     rating: 1800,
   });
   assert.equal(first.status, 201, JSON.stringify(first.data));
-
-  assert.equal((await post(manager, {
-    action: "join_tournament",
-    joinCode: event.join_code,
-    name: "Different Name",
-    fideId: "12345678",
-    rating: 1700,
-  })).status, 409);
-  assert.equal((await post(legacyJoin, {
-    joinCode: event.join_code,
-    name: "Legacy Duplicate",
-    fideId: "12345678",
-    rating: 1600,
-  })).status, 409);
-  assert.equal((await post(manager, {
-    action: "add_player",
-    tournamentId: event.id,
-    name: "Staff Duplicate",
-    fideId: "12345678",
-    rating: 1500,
-  }, owner.cookie)).status, 409);
 
   const sameName = await post(manager, {
     action: "join_tournament",
@@ -302,6 +280,13 @@ test("all registration paths reject duplicate FIDE IDs while allowing real name 
     rating: 1500,
   });
   assert.equal(sameName.status, 201, JSON.stringify(sameName.data));
+
+  const legacySameName = await post(legacyJoin, {
+    joinCode: event.join_code,
+    name: "Alex Example",
+    rating: 1500,
+  });
+  assert.equal(legacySameName.status, 201, JSON.stringify(legacySameName.data));
 });
 
 test("late entrants join between rounds and latest-round correction preserves earlier history", async () => {
@@ -351,12 +336,11 @@ test("late entrants join between rounds and latest-round correction preserves ea
     action: "add_player",
     tournamentId: event.id,
     name: "Late Entrant",
-    fideId: "LATE-1",
     rating: 1750,
   }, owner.cookie);
   assert.equal(late.status, 201, JSON.stringify(late.data));
   const latePlayer = database.prepare(
-    "SELECT id, checked_in AS checkedIn, guest_expires_at AS guestExpiresAt FROM players WHERE tournament_id = ? AND fide_id = 'LATE-1'",
+    "SELECT id, checked_in AS checkedIn, guest_expires_at AS guestExpiresAt FROM players WHERE tournament_id = ? AND name = 'Late Entrant'",
   ).get(event.id);
   assert.deepEqual({ ...latePlayer, checkedIn: Number(latePlayer.checkedIn) }, {
     id: latePlayer.id,
@@ -428,7 +412,6 @@ test("authorized tournament backup is complete, deterministic, and secret-free",
     action: "add_player",
     tournamentId: event.id,
     name: "Backup Player",
-    fideId: "BACKUP-1",
     rating: 1650,
   }, owner.cookie)).status, 201);
 

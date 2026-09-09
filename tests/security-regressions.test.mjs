@@ -128,12 +128,6 @@ test('simultaneous registrations cannot overfill a tournament', async () => {
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM players WHERE tournament_id = ?').get(tournament.id).n, 2);
 });
 
-test('simultaneous registrations cannot duplicate a FIDE ID', async () => {
-  const tournament = await event('fide-race', 20);
-  const results = await Promise.all(Array.from({ length: 6 }, (_, i) => post(manager, { action: 'join_tournament', tournamentId: tournament.id, name: `Concurrent ${i}`, fideId: '999001' })));
-  assert.equal(results.filter(r => r.status === 201).length, 1);
-  assert.ok(results.every(r => r.status === 201 || r.status === 409));
-});
 
 test('concurrent bad passwords cannot bypass the seven-attempt lockout', async () => {
   const owner = await account('login-race');

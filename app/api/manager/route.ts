@@ -13,7 +13,6 @@ import {
   playerSessionExpiryFrom,
   playerSessionTokenFromRequest,
 } from "@/lib/player-session";
-import { findPlayerByFideId, normalizeFideId } from "@/lib/player-registration";
 import {
   createSwissPairings,
   hydratePairingPlayers,
@@ -850,7 +849,6 @@ type ManagerAction =
       action: "add_player";
       tournamentId?: string;
       name?: string;
-      fideId?: string;
       rating?: number;
     }
   | {
@@ -858,7 +856,6 @@ type ManagerAction =
       tournamentId?: string;
       joinCode?: string;
       name?: string;
-      fideId?: string;
       rating?: number;
     }
   | { action: "leave_tournament"; tournamentId?: string }
@@ -1003,13 +1000,6 @@ export async function POST(request: Request) {
       if (name.length < 2) {
         return Response.json({ error: "Player name is too short." }, { status: 400 });
       }
-      const fideId = normalizeFideId(body.fideId);
-      if (await findPlayerByFideId(database, tournament.id, fideId)) {
-        return Response.json(
-          { error: "A player with this FIDE ID is already registered." },
-          { status: 409 },
-        );
-      }
 
       const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
       const playerId = crypto.randomUUID();
@@ -1028,7 +1018,7 @@ export async function POST(request: Request) {
             playerId,
             tournament.id,
             name,
-            fideId,
+            "",
             email,
             rating,
             tournament.id,
@@ -2082,7 +2072,6 @@ export async function POST(request: Request) {
         );
       }
       const name = cleanText(body.name, 100);
-      const fideId = normalizeFideId(body.fideId);
       const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
       if (name.length < 2) {
         return Response.json({ error: "Player name is too short." }, { status: 400 });
@@ -2101,12 +2090,6 @@ export async function POST(request: Request) {
         }
       }
 
-      if (await findPlayerByFideId(database, tournamentId, fideId)) {
-        return Response.json(
-          { error: "A player with this FIDE ID is already registered." },
-          { status: 409 },
-        );
-      }
       const createdAt = new Date();
       await database
         .prepare(
@@ -2121,7 +2104,7 @@ export async function POST(request: Request) {
           crypto.randomUUID(),
           tournamentId,
           name,
-          fideId,
+          "",
           rating,
           tournamentId,
           isLateEntry ? 1 : 0,

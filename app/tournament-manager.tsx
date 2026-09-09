@@ -188,14 +188,12 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   });
   const [playerForm, setPlayerForm] = useState({
     name: "",
-    fideId: "",
     rating: 1500,
   });
   const [joinForm, setJoinForm] = useState({
     tournamentId: "",
     joinCode: "",
     name: "",
-    fideId: "",
     rating: 1500,
   });
 
@@ -481,7 +479,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
       },
       "Guest player added",
     );
-    if (added) setPlayerForm({ name: "", fideId: "", rating: 1500 });
+    if (added) setPlayerForm({ name: "", rating: 1500 });
   }
 
   async function chooseTournament(tournamentId: string) {
@@ -522,7 +520,6 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
       tournamentId: tournamentItem?.id ?? "",
       joinCode: "",
       name: payload.viewerName ?? "",
-      fideId: "",
       rating: 1500,
     });
     setJoinOpen(true);
@@ -1579,19 +1576,6 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                           />
                         </label>
                         <label>
-                          <span>FIDE ID</span>
-                          <Input
-                            value={playerForm.fideId}
-                            onChange={(event) =>
-                              setPlayerForm((form) => ({
-                                ...form,
-                                fideId: event.target.value,
-                              }))
-                            }
-                            placeholder="Optional"
-                          />
-                        </label>
-                        <label>
                           <span>Rating</span>
                           <Input
                             type="number"
@@ -1618,7 +1602,6 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                           <TableRow>
                             <TableHead>Seed</TableHead>
                             <TableHead>Player</TableHead>
-                            <TableHead>FIDE ID</TableHead>
                             <TableHead>Rating</TableHead>
                             <TableHead>Check-in</TableHead>
                             <TableHead>Pairing status</TableHead>
@@ -1648,7 +1631,6 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                                   </>
                                 )}
                               </TableCell>
-                              <TableCell>{player.fideId || "—"}</TableCell>
                               <TableCell>{player.rating || "—"}</TableCell>
                               <TableCell>
                                 {snapshot.canManageCheckIn && !player.withdrawn ? (
@@ -1830,9 +1812,6 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
 
                           <div className="player-card-body">
                             <div className="player-card-meta">
-                              <span>
-                                FIDE: <strong>{player.fideId || "—"}</strong>
-                              </span>
                               <span>
                                 Rating: <strong>{player.rating || "—"}</strong>
                               </span>
@@ -3216,7 +3195,7 @@ function SuperadminDirectory({
                   <span>
                     <strong>{guest.name} · {guest.tournamentName}</strong>
                     <small>
-                      FIDE {guest.fideId || "—"} · {guest.rating} rating · {guest.withdrawn ? "Kicked / withdrawn" : "Active guest"} · joined {compactDate(guest.createdAt)}
+                      {guest.rating} rating · {guest.withdrawn ? "Kicked / withdrawn" : "Active guest"} · joined {compactDate(guest.createdAt)}
                     </small>
                   </span>
                 </div>
@@ -3783,14 +3762,12 @@ function JoinTournamentDialog({
     tournamentId: string;
     joinCode: string;
     name: string;
-    fideId: string;
     rating: number;
   };
   setForm: (form: {
     tournamentId: string;
     joinCode: string;
     name: string;
-    fideId: string;
     rating: number;
   }) => void;
   onSubmit: (event: FormEvent) => void;
@@ -3833,14 +3810,6 @@ function JoinTournamentDialog({
               value={form.name}
               onChange={(event) => setForm({ ...form, name: event.target.value })}
               placeholder="Name shown in pairings"
-            />
-          </label>
-          <label>
-            <span>FIDE ID</span>
-            <Input
-              value={form.fideId}
-              onChange={(event) => setForm({ ...form, fideId: event.target.value })}
-              placeholder="Optional"
             />
           </label>
           <label>

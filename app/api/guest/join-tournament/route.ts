@@ -1,7 +1,6 @@
 import { getDatabase } from "@/db/raw";
 import { guestExpiryFrom } from "@/lib/guest-players";
 import { createGuestToken } from "@/lib/guest-tokens";
-import { findPlayerByFideId, normalizeFideId } from "@/lib/player-registration";
 import { readJsonRequest, registrationConflict } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +16,6 @@ type GuestJoinBody = {
   joinCode?: string;
   tournamentId?: string;
   name?: string;
-  fideId?: string;
   rating?: number;
 };
 
@@ -74,13 +72,6 @@ export async function POST(request: Request) {
     if (name.length < 2) {
       return Response.json({ error: "Enter your name to join." }, { status: 400 });
     }
-    const fideId = normalizeFideId(body.fideId);
-    if (await findPlayerByFideId(database, tournament.id, fideId)) {
-      return Response.json(
-        { error: "A player with this FIDE ID is already registered." },
-        { status: 409 },
-      );
-    }
     const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
 
     const playerId = crypto.randomUUID();
@@ -98,7 +89,7 @@ export async function POST(request: Request) {
         playerId,
         tournament.id,
         name,
-        fideId,
+        "",
         rating,
         tournament.id,
         guestExpiryFrom(createdAt),
