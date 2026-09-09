@@ -1,11 +1,10 @@
 "use client";
 
-import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   ArrowRight,
   BookOpen,
-  Check,
   ChevronRight,
   ClipboardCheck,
   Copy,
@@ -29,9 +28,12 @@ import {
   Users,
 } from "lucide-react";
 import { useLanguage } from "./language-provider";
-import { translateText } from "@/lib/i18n";
 import { LanguageToggle } from "@/components/language-toggle";
 import { StandingMarker, standingAward } from "@/components/standing-marker";
+import { PixelArrow } from "@/components/pixel-arrow";
+import { PlayerHistoryPanel } from "@/components/player-history-panel";
+import { getPlayerHistory } from "@/lib/player-history";
+import { SmoothAccordion, ACCORDION_DURATION } from "@/components/smooth-accordion";
 import { ThemeToggles } from "@/components/theme-toggles";
 import { WheelPicker } from "@/components/wheel-picker";
 import { toast } from "sonner";
@@ -112,6 +114,8 @@ const emptyPayload: ManagerPayload = {
   tournaments: [],
   communityTournaments: [],
   openTournaments: [],
+  archivedOfficialTournaments: [],
+  archivedCommunityTournaments: [],
   snapshot: null,
   accounts: [],
   moderators: [],
@@ -145,6 +149,8 @@ function isNoShowResult(result: ResultCode) {
 }
 
 export function TournamentManager({ signInPath, signOutPath }: Props) {
+  const { language } = useLanguage();
+  const isTr = language === "tr";
   const [payload, setPayload] = useState<ManagerPayload>(emptyPayload);
   const [loading, setLoading] = useState(true);
   const latestLoadId = useRef(0);
@@ -164,6 +170,11 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   const [issuedModeratorTargetEmail, setIssuedModeratorTargetEmail] = useState<string | null>(null);
   const [joinTargetName, setJoinTargetName] = useState<string | null>(null);
   const [managePlayerId, setManagePlayerId] = useState<string | null>(null);
+  const [historySelection, setHistorySelection] = useState<{
+    playerId: string;
+    tournamentId: string;
+    open: boolean;
+  } | null>(null);
   const [roundView, setRoundView] = useState<{
     tournamentId: string;
     round: number;
@@ -298,6 +309,50 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
         : [],
     [snapshot],
   );
+  const historyPlayerId = historySelection?.tournamentId === snapshot?.tournament.id
+    ? historySelection?.playerId
+    : undefined;
+  const playerHistory = useMemo(
+    () => snapshot && historyPlayerId
+      ? getPlayerHistory(
+          historyPlayerId,
+          snapshot.players,
+          snapshot.pairings,
+          snapshot.standings,
+          snapshot.roundStatuses,
+          snapshot.tournament.currentRound,
+        )
+      : null,
+    [snapshot, historyPlayerId],
+  );
+
+  // Keep the selected row during its exit animation. Cancel stale work on every toggle.
+  useEffect(() => {
+    if (!historySelection || !historyPlayerId) return;
+    const timeout = setTimeout(() => {
+      if (!historySelection.open) {
+        setHistorySelection(null);
+        return;
+      }
+      const anchors = [
+        document.getElementById(`player-history-anchor-${historyPlayerId}`),
+        document.getElementById(`player-history-anchor-mobile-${historyPlayerId}`),
+      ];
+      const anchor = anchors.find((element) => element && element.getClientRects().length > 0);
+      anchor?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    }, historySelection.open ? 120 : ACCORDION_DURATION);
+    return () => clearTimeout(timeout);
+  }, [historySelection, historyPlayerId]);
+
+  const handleTogglePlayerHistory = (playerId: string) => {
+    if (!snapshot) return;
+    const tournamentId = snapshot.tournament.id;
+    setHistorySelection((previous) => ({
+      playerId,
+      tournamentId,
+      open: !(previous?.playerId === playerId && previous.tournamentId === tournamentId && previous.open),
+    }));
+  };
   const remainingResults = countPendingResults(currentPairings);
   const hasStandingResults = snapshot?.pairings.some((pairing) => pairing.result !== "*") ?? false;
   const hasChampion = snapshot && standingAward({
@@ -1178,12 +1233,15 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                         tournament.currentRound > 0 &&
                         remainingResults > 0 ? (
                           <span className="results-remaining" aria-live="polite">
-                            {remainingResults} result{remainingResults === 1 ? "" : "s"} remaining
+                            {isTr
+                              ? `${remainingResults} sonuç kaldı`
+                              : `${remainingResults} result${remainingResults === 1 ? "" : "s"} remaining`}
                           </span>
                         ) : tournament && savingResultIds.size > 0 ? (
                           <span className="results-remaining is-saving" aria-live="polite">
-                            Saving {savingResultIds.size} result
-                            {savingResultIds.size === 1 ? "" : "s"}…
+                            {isTr
+                              ? `${savingResultIds.size} sonuç kaydediliyor…`
+                              : `Saving ${savingResultIds.size} result${savingResultIds.size === 1 ? "" : "s"}…`}
                           </span>
                         ) : tournament && tournament.currentRound < tournament.rounds ? (
                           <Button
@@ -1284,36 +1342,135 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                         </div>
                       </>
                     )}
-                    <div className="table-scroll-shell">
-                    <Table className="swiss-table standings-table">
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>#</TableHead>
-                          <TableHead>Player</TableHead>
-                          <TableHead>Rating</TableHead>
-                          <TableHead>Pts</TableHead>
-                          <TableHead>BH</TableHead>
-                          <TableHead>SB</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {snapshot.standings.map((standing) => (
-                          <TableRow key={standing.playerId}>
-                            <TableCell className="rank-cell">{standing.rank}</TableCell>
-                            <TableCell className="player-name-cell">
-                              <StandingMarker rank={standing.rank} tournament={snapshot.tournament} hasResults={hasStandingResults} saving={savingResultIds.size > 0} />
-                              {standing.name}
-                            </TableCell>
-                            <TableCell>{standing.rating || "—"}</TableCell>
-                            <TableCell className="score-cell">
-                              {score(standing.score)}
-                            </TableCell>
-                            <TableCell>{score(standing.buchholz)}</TableCell>
-                            <TableCell>{score(standing.sonnebornBerger)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                    <div className="standing-table-container">
+                      <div className="table-scroll-shell">
+                        <Table className="swiss-table standings-table">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>#</TableHead>
+                              <TableHead>Player</TableHead>
+                              <TableHead>Rating</TableHead>
+                              <TableHead>Pts</TableHead>
+                              <TableHead>BH</TableHead>
+                              <TableHead>SB</TableHead>
+                              <TableHead className="standings-toggle-head" aria-label="History"></TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {snapshot.standings.map((standing) => {
+                              const isExpanded = historyPlayerId === standing.playerId && !!historySelection?.open;
+                              const historyData = historyPlayerId === standing.playerId ? playerHistory : null;
+
+                              return (
+                                <Fragment key={standing.playerId}>
+                                  <TableRow
+                                    id={`player-history-anchor-${standing.playerId}`}
+                                    className={isExpanded ? "standings-row-expanded" : undefined}
+                                  >
+                                    <TableCell className="rank-cell">{standing.rank}</TableCell>
+                                    <TableCell className="player-name-cell">
+                                      <StandingMarker rank={standing.rank} tournament={snapshot.tournament} hasResults={hasStandingResults} saving={savingResultIds.size > 0} />
+                                      {standing.name}
+                                    </TableCell>
+                                    <TableCell>{standing.rating || "—"}</TableCell>
+                                    <TableCell className="score-cell">
+                                      {score(standing.score)}
+                                    </TableCell>
+                                    <TableCell>{score(standing.buchholz)}</TableCell>
+                                    <TableCell>{score(standing.sonnebornBerger)}</TableCell>
+                                    <TableCell className="standings-toggle-cell">
+                                      <button
+                                        type="button"
+                                        className={`pixel-arrow-btn ${isExpanded ? "expanded" : ""}`}
+                                        onClick={() => handleTogglePlayerHistory(standing.playerId)}
+                                        aria-expanded={isExpanded}
+                                        aria-label={isTr ? `${standing.name} için maç geçmişi` : `Match history for ${standing.name}`}
+                                        title={isTr ? `Maç geçmişi: ${standing.name}` : `Match history: ${standing.name}`}
+                                      >
+                                        <PixelArrow direction={isExpanded ? "up" : "down"} />
+                                      </button>
+                                    </TableCell>
+                                  </TableRow>
+                                  {historyData && (
+                                    <TableRow className="standings-history-row">
+                                      <TableCell colSpan={7} className="standings-history-cell">
+                                        <SmoothAccordion isOpen={isExpanded}>
+                                          <PlayerHistoryPanel history={historyData} />
+                                        </SmoothAccordion>
+                                      </TableCell>
+                                    </TableRow>
+                                  )}
+                                </Fragment>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+
+                    <div className="standing-mobile-cards" role="region" aria-label="Standings list">
+                      {snapshot.standings.map((standing) => {
+                        const isExpanded = historyPlayerId === standing.playerId && !!historySelection?.open;
+                        const historyData = historyPlayerId === standing.playerId ? playerHistory : null;
+
+                        return (
+                          <article
+                            key={standing.playerId}
+                            id={`player-history-anchor-mobile-${standing.playerId}`}
+                            className="standing-card"
+                          >
+                            <header className="standing-card-header">
+                              <div className="standing-card-identity">
+                                <span className="standing-card-rank">
+                                  #{String(standing.rank).padStart(2, "0")}
+                                </span>
+                                <StandingMarker
+                                  rank={standing.rank}
+                                  tournament={snapshot.tournament}
+                                  hasResults={hasStandingResults}
+                                  saving={savingResultIds.size > 0}
+                                />
+                                <strong className="standing-card-name">{standing.name}</strong>
+                              </div>
+                              <button
+                                type="button"
+                                className={`pixel-arrow-btn ${isExpanded ? "expanded" : ""}`}
+                                onClick={() => handleTogglePlayerHistory(standing.playerId)}
+                                aria-expanded={isExpanded}
+                                aria-label={isTr ? `${standing.name} için maç geçmişi` : `Match history for ${standing.name}`}
+                                title={isTr ? `Maç geçmişi: ${standing.name}` : `Match history: ${standing.name}`}
+                              >
+                                <PixelArrow direction={isExpanded ? "up" : "down"} />
+                              </button>
+                            </header>
+
+                            <div className="standing-card-body">
+                              <div className="standing-card-stats">
+                                <span className="standing-badge standing-badge-pts">
+                                  {score(standing.score)} {isTr ? "PN" : "PTS"}
+                                </span>
+                                <span className="standing-badge">
+                                  Elo: <strong>{standing.rating || "—"}</strong>
+                                </span>
+                                <span className="standing-badge">
+                                  BH: <strong>{score(standing.buchholz)}</strong>
+                                </span>
+                                <span className="standing-badge">
+                                  SB: <strong>{score(standing.sonnebornBerger)}</strong>
+                                </span>
+                              </div>
+                            </div>
+
+                            {historyData && (
+                              <div className="standing-card-history">
+                                <SmoothAccordion isOpen={isExpanded}>
+                                  <PlayerHistoryPanel history={historyData} />
+                                </SmoothAccordion>
+                              </div>
+                            )}
+                          </article>
+                        );
+                      })}
                     </div>
                   </TabsContent>
 
@@ -1437,28 +1594,188 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                       </form>
                     )}
 
-                    <Table className="swiss-table">
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Seed</TableHead>
-                          <TableHead>Player</TableHead>
-                          <TableHead>FIDE ID</TableHead>
-                          <TableHead>Rating</TableHead>
-                          <TableHead>Check-in</TableHead>
-                          <TableHead>Pairing status</TableHead>
-                          <TableHead aria-label="Actions" />
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {snapshot.players.map((player) => (
-                          <TableRow key={player.id}>
-                            <TableCell className="rank-cell">
-                              {String(player.seed).padStart(2, "0")}
-                            </TableCell>
-                            <TableCell className="player-name-cell">
+                    <div className="player-table-container">
+                      <Table className="swiss-table">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Seed</TableHead>
+                            <TableHead>Player</TableHead>
+                            <TableHead>FIDE ID</TableHead>
+                            <TableHead>Rating</TableHead>
+                            <TableHead>Check-in</TableHead>
+                            <TableHead>Pairing status</TableHead>
+                            <TableHead aria-label="Actions" />
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {snapshot.players.map((player) => (
+                            <TableRow key={player.id}>
+                              <TableCell className="rank-cell">
+                                {String(player.seed).padStart(2, "0")}
+                              </TableCell>
+                              <TableCell className="player-name-cell">
+                                {snapshot.canEdit ? (
+                                  <button
+                                    className="player-name-button"
+                                    type="button"
+                                    onClick={() => setManagePlayerId(player.id)}
+                                  >
+                                    {player.name}
+                                    {player.isYou && <span className="you-tag">YOU</span>}
+                                  </button>
+                                ) : (
+                                  <>
+                                    {player.name}
+                                    {player.isYou && <span className="you-tag">YOU</span>}
+                                  </>
+                                )}
+                              </TableCell>
+                              <TableCell>{player.fideId || "—"}</TableCell>
+                              <TableCell>{player.rating || "—"}</TableCell>
+                              <TableCell>
+                                {snapshot.canManageCheckIn && !player.withdrawn ? (
+                                  <Button
+                                    size="sm"
+                                    variant={player.checkedIn ? "default" : "outline"}
+                                    disabled={working}
+                                    onClick={() =>
+                                      mutate(
+                                        {
+                                          action: "set_player_checked_in",
+                                          tournamentId: tournament?.id,
+                                          playerId: player.id,
+                                          checkedIn: !player.checkedIn,
+                                        },
+                                        player.checkedIn
+                                          ? `${player.name} check-in removed`
+                                          : `${player.name} checked in`,
+                                      )
+                                    }
+                                  >
+                                    <ClipboardCheck />
+                                    {player.checkedIn ? "Checked in" : "Check in"}
+                                  </Button>
+                                ) : (
+                                  <span className={`checkin-state ${player.checkedIn ? "is-checked" : ""}`}>
+                                    {player.checkedIn ? "Checked in" : "Not checked in"}
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <span
+                                  className={`player-state ${
+                                   player.withdrawn
+                                      ? "is-withdrawn"
+                                      : player.nextRoundStatus === "skip"
+                                        ? "is-skipping"
+                                        : player.nextRoundStatus === "bye"
+                                          ? "is-bye"
+                                          : "is-active"
+                                  }`}
+                                >
+                                  {player.withdrawn
+                                    ? "Withdrawn"
+                                    : player.nextRoundStatus === "skip"
+                                      ? `Skips round ${(tournament?.currentRound ?? 0) + 1}`
+                                      : player.nextRoundStatus === "bye"
+                                        ? `Round ${(tournament?.currentRound ?? 0) + 1} · 1-pt bye`
+                                        : "Active"}
+                                </span>
+                              </TableCell>
+                              <TableCell className="actions-cell">
+                                {snapshot.canEdit && tournament && (
+                                  <div className="player-actions">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      aria-label={`Manage ${player.name}`}
+                                      disabled={working}
+                                      onClick={() => setManagePlayerId(player.id)}
+                                    >
+                                      <Settings2 /> Manage
+                                    </Button>
+                                    {tournament.currentRound === 0 && (
+                                      <Button
+                                        size="icon-sm"
+                                        variant="ghost"
+                                        aria-label={`Remove ${player.name}`}
+                                        disabled={working}
+                                        onClick={() =>
+                                          mutate(
+                                            {
+                                              action: "remove_player",
+                                              tournamentId: tournament.id,
+                                              playerId: player.id,
+                                            },
+                                            "Player removed",
+                                          )
+                                        }
+                                      >
+                                        <Trash2 />
+                                      </Button>
+                                    )}
+                                  </div>
+                                )}
+                                {!snapshot.canEdit && player.isYou && tournament && (
+                                  <div className="player-actions">
+                                    {player.withdrawn ? (
+                                      <span className="checkin-state">Withdrawn</span>
+                                    ) : (
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={working}
+                                          >
+                                            <UserMinus /> Withdraw
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent className="confirmation-dialog">
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>
+                                              Withdraw from this tournament?
+                                            </AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              Your previous games and results stay
+                                              in the tournament history, but you
+                                              will not be paired in future rounds.
+                                              Tournament staff can restore you
+                                              later if allowed.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel>Stay registered</AlertDialogCancel>
+                                            <AlertDialogAction
+                                              onClick={withdrawSelf}
+                                              disabled={working}
+                                            >
+                                              Withdraw
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    )}
+                                  </div>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    <div className="player-mobile-cards" role="region" aria-label="Players list">
+                      {snapshot.players.map((player) => (
+                        <article key={player.id} className="player-card">
+                          <header className="player-card-header">
+                            <div className="player-card-identity">
+                              <span className="player-card-seed">
+                                #{String(player.seed).padStart(2, "0")}
+                              </span>
                               {snapshot.canEdit ? (
                                 <button
-                                  className="player-name-button"
+                                  className="player-name-button player-card-name"
                                   type="button"
                                   onClick={() => setManagePlayerId(player.id)}
                                 >
@@ -1466,19 +1783,48 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                                   {player.isYou && <span className="you-tag">YOU</span>}
                                 </button>
                               ) : (
-                                <>
+                                <strong className="player-card-name">
                                   {player.name}
                                   {player.isYou && <span className="you-tag">YOU</span>}
-                                </>
+                                </strong>
                               )}
-                            </TableCell>
-                            <TableCell>{player.fideId || "—"}</TableCell>
-                            <TableCell>{player.rating || "—"}</TableCell>
-                            <TableCell>
+                            </div>
+                            <span
+                              className={`player-state ${
+                                player.withdrawn
+                                  ? "is-withdrawn"
+                                  : player.nextRoundStatus === "skip"
+                                    ? "is-skipping"
+                                    : player.nextRoundStatus === "bye"
+                                      ? "is-bye"
+                                      : "is-active"
+                              }`}
+                            >
+                              {player.withdrawn
+                                ? "Withdrawn"
+                                : player.nextRoundStatus === "skip"
+                                  ? `Skips round ${(tournament?.currentRound ?? 0) + 1}`
+                                  : player.nextRoundStatus === "bye"
+                                    ? `Round ${(tournament?.currentRound ?? 0) + 1} · 1-pt bye`
+                                    : "Active"}
+                            </span>
+                          </header>
+
+                          <div className="player-card-body">
+                            <div className="player-card-meta">
+                              <span>
+                                FIDE: <strong>{player.fideId || "—"}</strong>
+                              </span>
+                              <span>
+                                Rating: <strong>{player.rating || "—"}</strong>
+                              </span>
+                            </div>
+                            <div className="player-card-checkin-line">
                               {snapshot.canManageCheckIn && !player.withdrawn ? (
                                 <Button
                                   size="sm"
                                   variant={player.checkedIn ? "default" : "outline"}
+                                  className="player-card-checkin-btn"
                                   disabled={working}
                                   onClick={() =>
                                     mutate(
@@ -1502,34 +1848,17 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                                   {player.checkedIn ? "Checked in" : "Not checked in"}
                                 </span>
                               )}
-                            </TableCell>
-                            <TableCell>
-                              <span
-                                className={`player-state ${
-                                  player.withdrawn
-                                    ? "is-withdrawn"
-                                    : player.nextRoundStatus === "skip"
-                                      ? "is-skipping"
-                                      : player.nextRoundStatus === "bye"
-                                        ? "is-bye"
-                                        : "is-active"
-                                }`}
-                              >
-                                {player.withdrawn
-                                  ? "Withdrawn"
-                                  : player.nextRoundStatus === "skip"
-                                    ? `Skips round ${(tournament?.currentRound ?? 0) + 1}`
-                                    : player.nextRoundStatus === "bye"
-                                      ? `Round ${(tournament?.currentRound ?? 0) + 1} · 1-pt bye`
-                                      : "Active"}
-                              </span>
-                            </TableCell>
-                            <TableCell className="actions-cell">
+                            </div>
+                          </div>
+
+                          {(snapshot.canEdit || (player.isYou && tournament)) && (
+                            <footer className="player-card-footer">
                               {snapshot.canEdit && tournament && (
-                                <div className="player-actions">
+                                <div className="player-card-actions">
                                   <Button
                                     size="sm"
                                     variant="outline"
+                                    className="player-card-manage-btn"
                                     aria-label={`Manage ${player.name}`}
                                     disabled={working}
                                     onClick={() => setManagePlayerId(player.id)}
@@ -1540,6 +1869,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                                     <Button
                                       size="icon-sm"
                                       variant="ghost"
+                                      className="player-card-remove-btn"
                                       aria-label={`Remove ${player.name}`}
                                       disabled={working}
                                       onClick={() =>
@@ -1559,7 +1889,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                                 </div>
                               )}
                               {!snapshot.canEdit && player.isYou && tournament && (
-                                <div className="player-actions">
+                                <div className="player-card-actions">
                                   {player.withdrawn ? (
                                     <span className="checkin-state">Withdrawn</span>
                                   ) : (
@@ -1600,11 +1930,11 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                                   )}
                                 </div>
                               )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                            </footer>
+                          )}
+                        </article>
+                      ))}
+                    </div>
                   </TabsContent>
                 </Tabs>
               </div>
@@ -1883,97 +2213,213 @@ function PairingsTable({
 
   return (
     <div>
-      <Table className="swiss-table pairing-table">
-      <TableHeader>
-        <TableRow>
-          <TableHead>Board</TableHead>
-          <TableHead>White</TableHead>
-          <TableHead>Result</TableHead>
-          <TableHead>Black</TableHead>
-          <TableHead>Status</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {pairings.map((pairing) => {
-          const saving = savingResultIds.has(pairing.id);
-          return (
-          <TableRow key={pairing.id}>
-            <TableCell className="board-cell">
-              {String(pairing.boardNumber).padStart(2, "0")}
-            </TableCell>
-            <TableCell className="player-name-cell">
-              <span className="pairing-player-line">
-                <span className="color-chip color-white" aria-label="White" />
-                <span>{pairing.whiteName}</span>
-                <span className="pairing-points">
-                  {score(scoreByPlayerId.get(pairing.whitePlayerId ?? "") ?? 0)} pts
-                </span>
-              </span>
-            </TableCell>
-            <TableCell>
-              {pairing.result === "1-BYE" ? (
-                <span className="bye-result">1–0 BYE</span>
-              ) : canEdit ? (
-                <div
-                  className="result-choice-group"
-                  role="group"
-                  aria-label={`Result for board ${pairing.boardNumber}`}
-                >
-                  {([
-                    ["1-0", "1–0"],
-                    ["½-½", "½–½ Draw"],
-                    ["0-1", "0–1"],
-                  ] as const).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={pairing.result === value ? "is-selected" : ""}
-                      aria-pressed={pairing.result === value}
-                      disabled={working || saving}
-                      onClick={() => onResult(pairing, value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <strong>{resultLabel(pairing.result)}</strong>
-              )}
-            </TableCell>
-            <TableCell className="player-name-cell">
-              {pairing.blackPlayerId ? (
+      <div className="pairing-table-container">
+        <Table className="swiss-table pairing-table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Board</TableHead>
+            <TableHead>White</TableHead>
+            <TableHead>Result</TableHead>
+            <TableHead>Black</TableHead>
+            <TableHead>Status</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {pairings.map((pairing) => {
+            const saving = savingResultIds.has(pairing.id);
+            return (
+            <TableRow key={pairing.id}>
+              <TableCell className="board-cell">
+                {String(pairing.boardNumber).padStart(2, "0")}
+              </TableCell>
+              <TableCell className="player-name-cell">
                 <span className="pairing-player-line">
-                  <span className="color-chip color-black" aria-label="Black" />
-                  <span>{pairing.blackName}</span>
+                  <span className="color-chip color-white" aria-label="White" />
+                  <span>{pairing.whiteName}</span>
                   <span className="pairing-points">
-                    {score(scoreByPlayerId.get(pairing.blackPlayerId) ?? 0)} pts
+                    {score(scoreByPlayerId.get(pairing.whitePlayerId ?? "") ?? 0)} pts
                   </span>
                 </span>
-              ) : (
-                "—"
-              )}
-            </TableCell>
-            <TableCell>
-              <span
-                className={`status-dot ${saving ? "saving" : ""} ${pairing.result !== "*" ? "done" : ""} ${
-                  isNoShowResult(pairing.result) ? "forfeit" : ""
-                }`}
-              >
-                {!saving && pairing.result !== "*" ? <Check /> : null}
-                {saving
-                  ? "Saving…"
-                  : isNoShowResult(pairing.result)
-                  ? "No-show"
-                  : pairing.result !== "*"
-                    ? "Recorded"
-                    : "Open"}
-              </span>
-            </TableCell>
-          </TableRow>
+              </TableCell>
+              <TableCell>
+                {pairing.result === "1-BYE" ? (
+                  <span className="bye-result">1–0 BYE</span>
+                ) : canEdit ? (
+                  <div
+                    className="result-choice-group"
+                    role="group"
+                    aria-label={`Result for board ${pairing.boardNumber}`}
+                  >
+                    {([
+                      ["1-0", "1–0"],
+                      ["½-½", "½–½ Draw"],
+                      ["0-1", "0–1"],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={pairing.result === value ? "is-selected" : ""}
+                        aria-pressed={pairing.result === value}
+                        disabled={working || saving}
+                        onClick={() => onResult(pairing, value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <strong>{resultLabel(pairing.result)}</strong>
+                )}
+              </TableCell>
+              <TableCell className="player-name-cell">
+                {pairing.blackPlayerId ? (
+                  <span className="pairing-player-line">
+                    <span className="color-chip color-black" aria-label="Black" />
+                    <span>{pairing.blackName}</span>
+                    <span className="pairing-points">
+                      {score(scoreByPlayerId.get(pairing.blackPlayerId) ?? 0)} pts
+                    </span>
+                  </span>
+                ) : (
+                  "—"
+                )}
+              </TableCell>
+              <TableCell>
+                <span
+                  className={`status-dot status-indicator ${saving ? "saving" : ""} ${pairing.result !== "*" ? "done" : ""} ${
+                    isNoShowResult(pairing.result) ? "forfeit" : ""
+                  }`}
+                  title={
+                    saving
+                      ? "Saving… / Kaydediliyor…"
+                      : isNoShowResult(pairing.result)
+                      ? "No-show / Hükmen"
+                      : pairing.result !== "*"
+                      ? "Recorded / Kaydedildi"
+                      : "Open / Sonuç bekleniyor"
+                  }
+                  aria-label={
+                    saving
+                      ? "Saving"
+                      : isNoShowResult(pairing.result)
+                      ? "No-show"
+                      : pairing.result !== "*"
+                      ? "Recorded"
+                      : "Open"
+                  }
+                >
+                  {saving ? "🔄" : isNoShowResult(pairing.result) ? "⚠️" : pairing.result !== "*" ? "✅" : "⏳"}
+                </span>
+              </TableCell>
+            </TableRow>
+            );
+          })}
+        </TableBody>
+        </Table>
+      </div>
+
+      <div className="pairing-mobile-cards" role="region" aria-label="Pairings list">
+        {pairings.map((pairing) => {
+          const saving = savingResultIds.has(pairing.id);
+          const whiteScore = scoreByPlayerId.get(pairing.whitePlayerId ?? "") ?? 0;
+          const blackScore = pairing.blackPlayerId ? scoreByPlayerId.get(pairing.blackPlayerId) ?? 0 : null;
+
+          return (
+            <article key={pairing.id} className="pairing-card">
+              <header className="pairing-card-header">
+                <span className="pairing-card-board">
+                  Board {String(pairing.boardNumber).padStart(2, "0")}
+                </span>
+                <span
+                  className={`status-dot status-indicator ${saving ? "saving" : ""} ${pairing.result !== "*" ? "done" : ""} ${
+                    isNoShowResult(pairing.result) ? "forfeit" : ""
+                  }`}
+                  title={
+                    saving
+                      ? "Saving… / Kaydediliyor…"
+                      : isNoShowResult(pairing.result)
+                      ? "No-show / Hükmen"
+                      : pairing.result !== "*"
+                      ? "Recorded / Kaydedildi"
+                      : "Open / Sonuç bekleniyor"
+                  }
+                  aria-label={
+                    saving
+                      ? "Saving"
+                      : isNoShowResult(pairing.result)
+                      ? "No-show"
+                      : pairing.result !== "*"
+                      ? "Recorded"
+                      : "Open"
+                  }
+                >
+                  {saving ? "🔄" : isNoShowResult(pairing.result) ? "⚠️" : pairing.result !== "*" ? "✅" : "⏳"}
+                </span>
+              </header>
+
+              <div className="pairing-card-body">
+                <div className={`pairing-card-player ${pairing.result === "1-0" || pairing.result === "1-BYE" ? "is-lead" : ""}`}>
+                  <div className="pairing-card-player-info">
+                    <span className="color-chip color-white" aria-label="White" />
+                    <strong className="pairing-card-name">{pairing.whiteName}</strong>
+                  </div>
+                  <span className="pairing-points">{score(whiteScore)} pts</span>
+                </div>
+
+                <div className={`pairing-card-player ${pairing.result === "0-1" ? "is-lead" : ""}`}>
+                  <div className="pairing-card-player-info">
+                    <span className="color-chip color-black" aria-label="Black" />
+                    {pairing.blackPlayerId ? (
+                      <strong className="pairing-card-name">{pairing.blackName}</strong>
+                    ) : (
+                      <span className="pairing-card-bye-label">BYE (Unpaired)</span>
+                    )}
+                  </div>
+                  {blackScore !== null && (
+                    <span className="pairing-points">{score(blackScore)} pts</span>
+                  )}
+                </div>
+              </div>
+
+              <footer className="pairing-card-footer">
+                {pairing.result === "1-BYE" ? (
+                  <div className="pairing-card-bye-result">
+                    <span className="bye-result">1–0 BYE</span>
+                  </div>
+                ) : canEdit ? (
+                  <div
+                    className="result-choice-group pairing-card-choice-group"
+                    role="group"
+                    aria-label={`Result for board ${pairing.boardNumber}`}
+                  >
+                    {([
+                      ["1-0", "1–0"],
+                      ["½-½", "½–½ Draw"],
+                      ["0-1", "0–1"],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={pairing.result === value ? "is-selected" : ""}
+                        aria-pressed={pairing.result === value}
+                        disabled={working || saving}
+                        onClick={() => onResult(pairing, value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="pairing-card-readonly-result">
+                    <span>Result:</span>
+                    <strong>{resultLabel(pairing.result)}</strong>
+                  </div>
+                )}
+              </footer>
+            </article>
           );
         })}
-      </TableBody>
-      </Table>
+      </div>
       {canEdit && (
         <p className="pairing-guidance">
           Record each board as 1–0, 0–1 or a draw. The next-round button appears
@@ -2339,6 +2785,29 @@ function TournamentLibrary({
         )}
       </section>
 
+      <section className="library-section tournament-archive-section" id="tournament-archive">
+        <div className="library-section-title archive-section-title">
+          <p className="section-code">
+            <Archive aria-hidden="true" /> TOURNAMENT ARCHIVE
+          </p>
+          <span>
+            {payload.archivedOfficialTournaments.length + payload.archivedCommunityTournaments.length} SAVED
+          </span>
+        </div>
+        <div className="archive-library-grid">
+          <TournamentArchiveGroup
+            title="Official archive"
+            tournaments={payload.archivedOfficialTournaments}
+            onOpenTournament={onOpenTournament}
+          />
+          <TournamentArchiveGroup
+            title="Community archive"
+            tournaments={payload.archivedCommunityTournaments}
+            onOpenTournament={onOpenTournament}
+          />
+        </div>
+      </section>
+
       <div className="library-features">
         <span><Users /> Player registry</span>
         <span><RefreshCw /> Deterministic pairing</span>
@@ -2346,6 +2815,38 @@ function TournamentLibrary({
         <ThemeToggles />
       </div>
     </div>
+  );
+}
+
+function TournamentArchiveGroup({
+  title,
+  tournaments,
+  onOpenTournament,
+}: {
+  title: string;
+  tournaments: TournamentSummary[];
+  onOpenTournament: (tournamentId: string) => void | Promise<void>;
+}) {
+  return (
+    <section className="archive-library-group" aria-label={title}>
+      <header>
+        <Archive aria-hidden="true" />
+        <h2>{title}</h2>
+        <span>{tournaments.length}</span>
+      </header>
+      {tournaments.length ? (
+        <div className="archive-card-list">
+          {tournaments.map((item) => (
+            <TournamentCard key={item.id} item={item} onOpen={onOpenTournament} />
+          ))}
+        </div>
+      ) : (
+        <div className="empty-library-note archive-empty-note">
+          <strong>No archived tournaments yet.</strong>
+          <span>Finished public tournaments will stay available here.</span>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -2375,7 +2876,10 @@ function TournamentCard({
     <article className="tournament-card">
       <div className="tournament-card-topline">
         <span className={`role-badge role-${item.role}`}>{roleLabel}</span>
-        <span>{item.archivedAt ? "Archived" : statusLabel(item.status)}</span>
+        <span className={item.archivedAt ? "archive-card-status" : undefined}>
+          {item.archivedAt && <Archive aria-hidden="true" />}
+          {item.archivedAt ? "Archived" : statusLabel(item.status)}
+        </span>
       </div>
       <h2>{item.name}</h2>
       <p>{item.city || "Location not set"}</p>

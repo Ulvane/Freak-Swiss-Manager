@@ -102,11 +102,17 @@ test('public library separates official/community and never lists private tourna
   const signedIn = await post(login, {email:'owner@example.test',password:'long-test-password'});
   const hidden = await post(manager, {action:'create_tournament',name:'Private event',visibility:'private'}, signedIn.cookie);
   const community = await post(manager, {action:'create_tournament',name:'Community event',visibility:'community'}, signedIn.cookie);
+  const archivedCommunity = await post(manager, {action:'create_tournament',name:'Archived community event',visibility:'community'}, signedIn.cookie);
+  await post(manager, {action:'set_tournament_archived',tournamentId:archivedCommunity.data.tournamentId,archived:true}, signedIn.cookie);
   globalThis.__freakRouteCookies = new Map();
   const response = await manager.GET(new Request('https://test.invalid/api/manager'));
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.ok(data.communityTournaments.some(t=>t.id===community.data.tournamentId));
+  assert.ok(data.archivedCommunityTournaments.some(t=>t.id===archivedCommunity.data.tournamentId));
+  assert.ok(!data.communityTournaments.some(t=>t.id===archivedCommunity.data.tournamentId));
+  assert.ok(data.archivedCommunityTournaments.every(t=>t.visibility==='community' && t.archivedAt));
+  assert.ok(data.archivedOfficialTournaments.every(t=>t.visibility==='official' && t.archivedAt));
   assert.ok(!JSON.stringify(data).includes(hidden.data.tournamentId));
   assert.ok(!data.openTournaments.some(t=>t.id===community.data.tournamentId));
 });

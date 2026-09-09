@@ -701,8 +701,10 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
   const selectedId = tournamentId || null;
   let openTournaments: TournamentSummary[] = [];
   let communityTournaments: TournamentSummary[] = [];
+  let archivedOfficialTournaments: TournamentSummary[] = [];
+  let archivedCommunityTournaments: TournamentSummary[] = [];
   if (!selectedId) {
-    const [openRows, communityRows] = await Promise.all([
+    const [openRows, communityRows, archivedOfficialRows, archivedCommunityRows] = await Promise.all([
       database
         .prepare(
           `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(p.id) AS playerCount
@@ -721,29 +723,43 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
            GROUP BY t.id ORDER BY t.created_at DESC LIMIT 100`,
         )
         .all<RawTournamentSummary>(),
+      database
+        .prepare(
+          `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(p.id) AS playerCount
+           FROM tournaments t
+           LEFT JOIN players p ON p.tournament_id = t.id
+           WHERE t.visibility = 'official' AND t.archived_at IS NOT NULL
+           GROUP BY t.id ORDER BY t.archived_at DESC LIMIT 100`,
+        )
+        .all<RawTournamentSummary>(),
+      database
+        .prepare(
+          `SELECT ${TOURNAMENT_SELECT_FROM_T}, COUNT(p.id) AS playerCount
+           FROM tournaments t
+           LEFT JOIN players p ON p.tournament_id = t.id
+           WHERE t.visibility = 'community' AND t.archived_at IS NOT NULL
+           GROUP BY t.id ORDER BY t.archived_at DESC LIMIT 100`,
+        )
+        .all<RawTournamentSummary>(),
     ]);
+    const asPublicSummary = (row: RawTournamentSummary): TournamentSummary => {
+      const personal = tournaments.find((item) => item.id === row.id);
+      return {
+        ...publicTournament(row),
+        joinCode: null,
+        playerCount: Number(row.playerCount),
+        role: personal?.role ?? "visitor",
+        hasJoined: personal?.hasJoined ?? false,
+      };
+    };
     openTournaments = ((openRows.results ?? []) as RawTournamentSummary[])
-      .map((row) => {
-        const personal = tournaments.find((item) => item.id === row.id);
-        return {
-          ...publicTournament(row),
-          joinCode: null,
-          playerCount: Number(row.playerCount),
-          role: personal?.role ?? ("visitor" as const),
-          hasJoined: personal?.hasJoined ?? false,
-        };
-      });
+      .map(asPublicSummary);
     communityTournaments = ((communityRows.results ?? []) as RawTournamentSummary[])
-      .map((row) => {
-        const personal = tournaments.find((item) => item.id === row.id);
-        return {
-          ...publicTournament(row),
-          joinCode: null,
-          playerCount: Number(row.playerCount),
-          role: personal?.role ?? ("visitor" as const),
-          hasJoined: personal?.hasJoined ?? false,
-        };
-      });
+      .map(asPublicSummary);
+    archivedOfficialTournaments = ((archivedOfficialRows.results ?? []) as RawTournamentSummary[])
+      .map(asPublicSummary);
+    archivedCommunityTournaments = ((archivedCommunityRows.results ?? []) as RawTournamentSummary[])
+      .map(asPublicSummary);
   }
   const snapshot = selectedId
     ? await loadSnapshot(selectedId, viewerEmail, playerSessionTokenHash)
@@ -779,6 +795,8 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
     tournaments,
     communityTournaments,
     openTournaments,
+    archivedOfficialTournaments,
+    archivedCommunityTournaments,
     snapshot,
     accounts: directory.accounts,
     moderators: directory.moderators,

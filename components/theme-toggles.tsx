@@ -1,11 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { Moon, Sun } from "lucide-react";
 
+function subscribeToAppearance(onChange: () => void) {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme", "data-mode"],
+  });
+  return () => observer.disconnect();
+}
+
 export function ThemeToggles() {
-  const [theme, setTheme] = useState("red");
-  const [mode, setMode] = useState("light");
+  const theme = useSyncExternalStore(
+    subscribeToAppearance,
+    () => document.documentElement.getAttribute("data-theme") || "red",
+    () => "red",
+  );
+  const mode = useSyncExternalStore(
+    subscribeToAppearance,
+    () => document.documentElement.getAttribute("data-mode") || "light",
+    () => "light",
+  );
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("freak-swiss-theme") || "red";
@@ -13,8 +30,6 @@ export function ThemeToggles() {
     const systemPrefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     const initialMode = userSavedMode || (systemPrefersDark ? "dark" : "light");
     
-    setTheme(savedTheme);
-    setMode(initialMode);
     
     if (savedTheme === "turquoise") {
       document.documentElement.setAttribute("data-theme", "turquoise");
@@ -32,7 +47,6 @@ export function ThemeToggles() {
     const handleSystemChange = (e: MediaQueryListEvent) => {
       if (!window.localStorage.getItem("freak-swiss-mode")) {
         const nextMode = e.matches ? "dark" : "light";
-        setMode(nextMode);
         if (nextMode === "dark") {
           document.documentElement.setAttribute("data-mode", "dark");
         } else {
@@ -46,7 +60,6 @@ export function ThemeToggles() {
 
   const toggleTheme = () => {
     const newTheme = theme === "red" ? "turquoise" : "red";
-    setTheme(newTheme);
     window.localStorage.setItem("freak-swiss-theme", newTheme);
     if (newTheme === "turquoise") {
       document.documentElement.setAttribute("data-theme", "turquoise");
@@ -57,7 +70,6 @@ export function ThemeToggles() {
 
   const toggleMode = () => {
     const newMode = mode === "light" ? "dark" : "light";
-    setMode(newMode);
     window.localStorage.setItem("freak-swiss-mode", newMode);
     if (newMode === "dark") {
       document.documentElement.setAttribute("data-mode", "dark");

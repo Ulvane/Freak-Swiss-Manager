@@ -172,6 +172,8 @@ export type ManagerPayload = {
   tournaments: TournamentSummary[];
   communityTournaments: TournamentSummary[];
   openTournaments: TournamentSummary[];
+  archivedOfficialTournaments: TournamentSummary[];
+  archivedCommunityTournaments: TournamentSummary[];
   snapshot: TournamentSnapshot | null;
   accounts: AccountSummary[];
   moderators: ModeratorSummary[];

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { LanguageProvider } from "./language-provider";
-import { LanguageToggle } from "@/components/language-toggle";
 
 export const metadata: Metadata = {
   title: "Freak Swiss Manager — Swiss Manager K Edition",

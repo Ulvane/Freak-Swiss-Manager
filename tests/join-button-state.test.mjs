@@ -19,11 +19,12 @@ test("tournament cards show a red Join action and a disabled grey Joined state",
 
 test("public listings keep live personal tournaments visible", async () => {
   const route = await readFile(`${root}/app/api/manager/route.ts`, "utf8");
-  const listingBlock = route.slice(route.indexOf("openTournaments ="), route.indexOf("const snapshot ="));
+  const listingBlock = route.slice(route.indexOf("const asPublicSummary"), route.indexOf("const snapshot ="));
 
   assert.doesNotMatch(listingBlock, /filter\(\(row\) => !personalIds\.has\(row\.id\)\)/);
   assert.match(listingBlock, /const personal = tournaments\.find\(\(item\) => item\.id === row\.id\)/);
-  assert.match(listingBlock, /role: personal\?\.role \?\? \(\"visitor\" as const\)/);
+  assert.match(listingBlock, /role: personal\?\.role \?\? \"visitor\"/);
+  assert.match(listingBlock, /openTournaments[\s\S]*\.map\(asPublicSummary\)/);
 });
 
 test("tournament navigation keeps browser history inside the app", async () => {

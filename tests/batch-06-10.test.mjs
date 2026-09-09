@@ -41,9 +41,14 @@ test("official and community listings are separate and private events stay code-
     /registration_open = 1/,
   );
   assert.match(route, /WHERE t\.visibility = 'community' AND t\.archived_at IS NULL/);
+  assert.match(route, /WHERE t\.visibility = 'official' AND t\.archived_at IS NOT NULL/);
+  assert.match(route, /WHERE t\.visibility = 'community' AND t\.archived_at IS NOT NULL/);
   assert.doesNotMatch(route, /WHERE t\.visibility = 'private'/);
   assert.match(ui, /OFFICIAL TOURNAMENTS/);
   assert.match(ui, /id="community-tournaments"/);
+  assert.match(ui, /id="tournament-archive"/);
+  assert.match(ui, /Official archive/);
+  assert.match(ui, /Community archive/);
 });
 
 test("crosstable combines games, byes, skips and withdrawal history", async () => {
