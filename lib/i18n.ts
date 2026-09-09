@@ -51,6 +51,7 @@ const exactTranslations: Record<string, string> = {
   "Your tournaments": "Turnuvaların",
   "Official tournaments": "Resmî turnuvalar",
   "Community tournaments": "Topluluk turnuvaları",
+  "Tournament archive": "Turnuva arşivi",
   "Create tournament": "Turnuva oluştur",
   "Join with code": "Kodla katıl",
   "Open desk": "Masayı aç",

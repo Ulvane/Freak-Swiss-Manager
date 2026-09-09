@@ -47,6 +47,8 @@ test("official and community listings are separate and private events stay code-
   assert.match(ui, /OFFICIAL TOURNAMENTS/);
   assert.match(ui, /id="community-tournaments"/);
   assert.match(ui, /id="tournament-archive"/);
+  assert.match(ui, /className="archive-menu-button"/);
+  assert.match(ui, /openArchiveLibrary/);
   assert.match(ui, /Official archive/);
   assert.match(ui, /Community archive/);
 });

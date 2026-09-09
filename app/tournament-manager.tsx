@@ -499,9 +499,17 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
   }
 
   async function openCommunityLibrary() {
+    await openLibrarySection("community-tournaments");
+  }
+
+  async function openArchiveLibrary() {
+    await openLibrarySection("tournament-archive");
+  }
+
+  async function openLibrarySection(sectionId: string) {
     await openLibrary();
     window.requestAnimationFrame(() => {
-      document.getElementById("community-tournaments")?.scrollIntoView({
+      document.getElementById(sectionId)?.scrollIntoView({
         behavior: "smooth",
         block: "start",
       });
@@ -717,6 +725,16 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
               onClick={() => void openCommunityLibrary()}
             >
               Community tournaments
+            </button>
+            <button
+              className="archive-menu-button"
+              type="button"
+              onClick={() => void openArchiveLibrary()}
+              aria-label="Tournament archive"
+              title="Tournament archive"
+            >
+              <Archive aria-hidden="true" />
+              <span>Archive</span>
             </button>
             {payload.authenticated ? (
               <>

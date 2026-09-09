@@ -413,6 +413,39 @@ a {
   cursor: pointer;
 }
 
+.archive-menu-button {
+  display: inline-flex;
+  min-width: 36px;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 5px 9px;
+  border: 1px solid var(--ink);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.68rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.archive-menu-button:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.archive-menu-button:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+.archive-menu-button svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+}
+
 .audit-link {
   display: inline-flex;
   align-items: center;
@@ -3551,6 +3584,15 @@ a {
   .viewer-name,
   .audit-link {
     display: none !important;
+  }
+
+  .archive-menu-button {
+    width: 36px;
+    padding: 5px;
+  }
+
+  .archive-menu-button span {
+    display: none;
   }
 
   .wordmark {
