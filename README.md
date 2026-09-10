@@ -108,7 +108,8 @@ The production application uses a Cloudflare Worker and a D1 database bound as
    directory.
 
 The deploy command applies every unapplied migration in `drizzle/` before
-publishing the new Worker version.
+publishing the new Worker version through the locally installed
+`@vinext/cloudflare` deployment package.
 
 For the abandoned, empty two-table prototype database only, the tracked
 `scripts/database/repair-empty-legacy-schema.sql` prerequisite preserves its
