@@ -79,9 +79,9 @@ export async function POST(request: Request) {
     await database
       .prepare(
         `INSERT INTO players
-           (id, tournament_id, name, fide_id, account_email,
+           (id, tournament_id, name, account_email,
             rating, seed, withdrawn, checked_in, guest_expires_at, created_at)
-         VALUES (?, ?, ?, ?, NULL, ?,
+         VALUES (?, ?, ?, NULL, ?,
            (SELECT COALESCE(MAX(seed), 0) + 1 FROM players WHERE tournament_id = ?),
            0, 0, ?, ?)`,
       )
@@ -89,7 +89,6 @@ export async function POST(request: Request) {
         playerId,
         tournament.id,
         name,
-        "",
         rating,
         tournament.id,
         guestExpiryFrom(createdAt),

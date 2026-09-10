@@ -34,7 +34,6 @@ export const players = sqliteTable(
       .notNull()
       .references(() => tournaments.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    fideId: text("fide_id").notNull().default(""),
     accountEmail: text("account_email"),
     rating: integer("rating").notNull().default(0),
     seed: integer("seed").notNull(),

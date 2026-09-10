@@ -92,6 +92,13 @@
       "when": 1788980000000,
       "tag": "0012_roster_security_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1789030812205,
+      "tag": "0013_remove_fide_ids",
+      "breakpoints": true
     }
   ]
 }

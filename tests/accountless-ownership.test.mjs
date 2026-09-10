@@ -114,9 +114,9 @@ test("migration preserves tournaments and adds ownership-session fields", async 
   database
     .prepare(
       `INSERT INTO players
-       (id, tournament_id, name, fide_id, account_email, rating, seed,
+       (id, tournament_id, name, account_email, rating, seed,
         withdrawn, checked_in, guest_expires_at, created_at)
-       VALUES ('p1', 't1', 'Player One', '', NULL, 1500, 1, 0, 0, NULL, '2026-09-03')`,
+       VALUES ('p1', 't1', 'Player One', NULL, 1500, 1, 0, 0, NULL, '2026-09-03')`,
     )
     .run();
 

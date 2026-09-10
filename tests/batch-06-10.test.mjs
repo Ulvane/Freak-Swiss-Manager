@@ -21,7 +21,6 @@ after(async () => {
 const player = (id, seed, withdrawn = false, withdrawnFromRound = null) => ({
   id,
   name: `Player ${id}`,
-  fideId: "",
   rating: 2000 - seed,
   seed,
   withdrawn,

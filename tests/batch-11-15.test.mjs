@@ -79,11 +79,11 @@ test("withdrawal persists its starting round without deleting historical pairing
     VALUES ('t1', 'owner@example.com', 'Test', '', 5, 'ABC123', 0,
             'community', 1, 'between_rounds', '2026-09-03');
     INSERT INTO players
-      (id, tournament_id, name, fide_id, account_email, rating, seed,
+      (id, tournament_id, name, account_email, rating, seed,
        withdrawn, checked_in, guest_expires_at, created_at)
     VALUES
-      ('p1', 't1', 'Player One', '', NULL, 1800, 1, 0, 1, NULL, '2026-09-03'),
-      ('p2', 't1', 'Player Two', '', NULL, 1700, 2, 0, 1, NULL, '2026-09-03');
+      ('p1', 't1', 'Player One', NULL, 1800, 1, 0, 1, NULL, '2026-09-03'),
+      ('p2', 't1', 'Player Two', NULL, 1700, 2, 0, 1, NULL, '2026-09-03');
     INSERT INTO rounds VALUES ('r1', 't1', 1, 'completed', '2026-09-03');
     INSERT INTO pairings
       (id, tournament_id, round_id, round_number, board_number,
@@ -141,7 +141,6 @@ test("crosstable stays in standings order and updates from the same pairing snap
   const players = Array.from({ length: 4 }, (_, index) => ({
     id: `p${index + 1}`,
     name: `Player ${index + 1}`,
-    fideId: "",
     rating: 2000 - index * 50,
     seed: index + 1,
     withdrawn: index === 3,

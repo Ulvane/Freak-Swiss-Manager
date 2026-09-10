@@ -177,7 +177,7 @@ test("guest join route requires no authentication and validates registration sta
   assert.doesNotMatch(routeSource, /getAuthenticatedUser/);
   assert.match(routeSource, /registration_open AS registrationOpen/);
   assert.match(routeSource, /Registration is closed for this tournament/);
-  assert.match(routeSource, /VALUES \(\?, \?, \?, \?, NULL/);
+  assert.match(routeSource, /VALUES \(\?, \?, \?, NULL/);
   assert.match(routeSource, /createGuestToken\(database, \{/);
 });
 

@@ -20,9 +20,9 @@ const { translateText } = await vite.ssrLoadModule("/lib/i18n.ts");
 
 test("getPlayerHistory calculates round-by-round pairings, opponents, colors, and results", () => {
   const players = [
-    { id: "p1", name: "Alice", rating: 2000, seed: 1, withdrawn: false, withdrawnFromRound: null, checkedIn: true, nextRoundStatus: "active", isYou: false, fideId: "101" },
-    { id: "p2", name: "Bob", rating: 1900, seed: 2, withdrawn: false, withdrawnFromRound: null, checkedIn: true, nextRoundStatus: "active", isYou: false, fideId: "102" },
-    { id: "p3", name: "Charlie", rating: 1800, seed: 3, withdrawn: false, withdrawnFromRound: null, checkedIn: true, nextRoundStatus: "active", isYou: false, fideId: "103" },
+    { id: "p1", name: "Alice", rating: 2000, seed: 1, withdrawn: false, withdrawnFromRound: null, checkedIn: true, nextRoundStatus: "active", isYou: false },
+    { id: "p2", name: "Bob", rating: 1900, seed: 2, withdrawn: false, withdrawnFromRound: null, checkedIn: true, nextRoundStatus: "active", isYou: false },
+    { id: "p3", name: "Charlie", rating: 1800, seed: 3, withdrawn: false, withdrawnFromRound: null, checkedIn: true, nextRoundStatus: "active", isYou: false },
   ];
 
   const pairings = [

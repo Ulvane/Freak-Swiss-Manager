@@ -34,7 +34,6 @@ export type TournamentSummary = Tournament & {
 export type Player = {
   id: string;
   name: string;
-  fideId?: string;
   rating: number;
   seed: number;
   withdrawn: boolean;
@@ -73,7 +72,6 @@ export type GuestSummary = {
   tournamentId: string;
   tournamentName: string;
   name: string;
-  fideId?: string;
   rating: number;
   withdrawn: boolean;
   guestExpiresAt: string | null;

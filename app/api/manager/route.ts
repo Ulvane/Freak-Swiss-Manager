@@ -315,7 +315,7 @@ async function loadSnapshot(
   ] = await Promise.all([
     database
       .prepare(
-        `SELECT id, name, fide_id AS fideId, account_email AS accountEmail,
+        `SELECT id, name, account_email AS accountEmail,
                 rating, seed, withdrawn,
                 withdrawn_from_round AS withdrawnFromRound,
                 checked_in AS checkedIn,
@@ -372,7 +372,6 @@ async function loadSnapshot(
   const players: Player[] = rawPlayers.map((player) => ({
     id: player.id,
     name: player.name,
-    fideId: player.fideId,
     rating: Number(player.rating),
     seed: Number(player.seed),
     withdrawn: Boolean(player.withdrawn),
@@ -512,7 +511,7 @@ async function loadAdminDirectory() {
     database
       .prepare(
         `SELECT p.id AS playerId, p.tournament_id AS tournamentId,
-                t.name AS tournamentName, p.name, p.fide_id AS fideId,
+                t.name AS tournamentName, p.name,
                 p.rating, p.withdrawn, p.guest_expires_at AS guestExpiresAt,
                 COALESCE(gt.token_hint, substr(p.guest_token_hash, 1, 8)) AS guestTokenHint,
                 p.created_at AS createdAt
@@ -1008,9 +1007,9 @@ export async function POST(request: Request) {
         database
           .prepare(
             `INSERT INTO players
-               (id, tournament_id, name, fide_id, account_email,
+               (id, tournament_id, name, account_email,
                 rating, seed, withdrawn, checked_in, guest_expires_at, created_at)
-             VALUES (?, ?, ?, ?, ?, ?,
+             VALUES (?, ?, ?, ?, ?,
                (SELECT COALESCE(MAX(seed), 0) + 1 FROM players WHERE tournament_id = ?),
                0, 0, NULL, ?)`,
           )
@@ -1018,7 +1017,6 @@ export async function POST(request: Request) {
             playerId,
             tournament.id,
             name,
-            "",
             email,
             rating,
             tournament.id,
@@ -1637,15 +1635,14 @@ export async function POST(request: Request) {
           database
             .prepare(
               `INSERT INTO players
-                 (id, tournament_id, name, fide_id, account_email,
+                 (id, tournament_id, name, account_email,
                   rating, seed, withdrawn, checked_in, created_at)
-               VALUES (?, ?, ?, ?, NULL, ?, ?, 0, 1, ?)`,
+               VALUES (?, ?, ?, NULL, ?, ?, 0, 1, ?)`,
             )
             .bind(
               player.id,
               id,
               player.name,
-              player.fideId,
               player.rating,
               player.seed,
               now,
@@ -1971,7 +1968,7 @@ export async function POST(request: Request) {
         await Promise.all([
           database
             .prepare(
-              `SELECT id, name, fide_id AS fideId, account_email AS accountEmail,
+              `SELECT id, name, account_email AS accountEmail,
                       rating, seed, withdrawn,
                       withdrawn_from_round AS withdrawnFromRound,
                       checked_in AS checkedIn, created_at AS createdAt
@@ -2094,9 +2091,9 @@ export async function POST(request: Request) {
       await database
         .prepare(
           `INSERT INTO players
-             (id, tournament_id, name, fide_id, account_email,
+             (id, tournament_id, name, account_email,
               rating, seed, withdrawn, checked_in, guest_expires_at, created_at)
-           VALUES (?, ?, ?, ?, NULL, ?,
+           VALUES (?, ?, ?, NULL, ?,
              (SELECT COALESCE(MAX(seed), 0) + 1 FROM players WHERE tournament_id = ?),
              0, ?, ?, ?)`,
         )
@@ -2104,7 +2101,6 @@ export async function POST(request: Request) {
           crypto.randomUUID(),
           tournamentId,
           name,
-          "",
           rating,
           tournamentId,
           isLateEntry ? 1 : 0,

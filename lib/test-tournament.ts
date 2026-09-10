@@ -3,7 +3,6 @@ export const TEST_TOURNAMENT_SOURCE = "2700chess · September 2026 Top 64";
 
 export type TestTournamentPlayer = {
   name: string;
-  fideId: string;
   rating: number;
   seed: number;
 };
@@ -78,7 +77,6 @@ export function createTestTournamentRoster(): TestTournamentPlayer[] {
 
   return players.map(([name, rating], index) => ({
     name,
-    fideId: "",
     rating,
     seed: index + 1,
   }));

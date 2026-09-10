@@ -42,7 +42,6 @@ test("2700chess Top 64 creates exactly one unresolved first round", async () => 
   assert.deepEqual(roster[0], {
     id: "test-player-1",
     name: "Carlsen, Magnus",
-    fideId: "",
     rating: 2823,
     seed: 1,
     checkedIn: true,

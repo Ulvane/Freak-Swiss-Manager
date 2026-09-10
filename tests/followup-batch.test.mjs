@@ -252,6 +252,7 @@ test("site moderation controls remain superadmin-only and are visible in the pri
   assert.equal(directory.status, 200);
   assert.ok(directory.data.accounts.some((account) => account.email === member.email));
   assert.ok(directory.data.guests.some((entry) => entry.playerId === guest.data.playerId));
+  assert.ok(directory.data.guests.every((entry) => !Object.hasOwn(entry, "fideId")));
   assert.ok(directory.data.moderationAuditLog.some((entry) => entry.action === "grant_moderator"));
   assert.ok(directory.data.moderationAuditLog.some((entry) => entry.action === "revoke_guest_access"));
 
@@ -287,6 +288,20 @@ test("real name collisions are permitted across registration paths", async () =>
     rating: 1500,
   });
   assert.equal(legacySameName.status, 201, JSON.stringify(legacySameName.data));
+
+  const exported = await post(manager, {
+    action: "export_tournament",
+    tournamentId: event.id,
+  }, owner.cookie);
+  assert.equal(exported.status, 200, JSON.stringify(exported.data));
+  assert.equal(exported.data.backup.players.length, 3);
+  assert.ok(exported.data.backup.players.every((player) => !Object.hasOwn(player, "fideId")));
+
+  const response = await manager.GET(new Request(`https://test.invalid/api/manager?t=${event.id}`));
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.snapshot.players.length, 3);
+  assert.ok(payload.snapshot.players.every((player) => !Object.hasOwn(player, "fideId")));
 });
 
 test("late entrants join between rounds and latest-round correction preserves earlier history", async () => {
@@ -297,7 +312,6 @@ test("late entrants join between rounds and latest-round correction preserves ea
       action: "add_player",
       tournamentId: event.id,
       name: `Starter ${index}`,
-      fideId: `START-${index}`,
       rating: 2100 - index * 50,
     }, owner.cookie);
     assert.equal(added.status, 201, JSON.stringify(added.data));
