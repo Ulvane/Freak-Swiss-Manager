@@ -34,6 +34,7 @@ import {
 } from "@/lib/test-tournament";
 import { isEnterableResult } from "@/lib/result-workflow";
 import { readJsonRequest, registrationConflict } from "@/lib/request-security";
+import { transferDeletedOwnerStatements } from "@/lib/ownership-transfer";
 import type {
   AccountSummary,
   GuestSummary,
@@ -843,6 +844,7 @@ type ManagerAction =
     }
   | { action: "set_tournament_archived"; tournamentId?: string; archived?: boolean }
   | { action: "export_tournament"; tournamentId?: string }
+  | { action: "change_organizer"; tournamentId?: string; email?: string }
   | { action: "create_test_tournament" }
   | {
       action: "add_player";
@@ -1513,17 +1515,17 @@ export async function POST(request: Request) {
       if (!target || isSuperadmin(target)) {
         return Response.json({ error: "The superadmin account cannot be deleted." }, { status: 400 });
       }
-      const ownedTournament = await database
-        .prepare(`SELECT id FROM tournaments WHERE owner_email = ? LIMIT 1`)
+      const account = await database
+        .prepare(`SELECT email FROM user_accounts WHERE email = ?`)
         .bind(target)
-        .first<{ id: string }>();
-      if (ownedTournament) {
-        return Response.json(
-          { error: "This account owns tournaments. Delete or transfer them first." },
-          { status: 409 },
-        );
+        .first<{ email: string }>();
+      if (!account) {
+        return Response.json({ error: "Account not found." }, { status: 404 });
       }
-      await database.batch([
+
+      const now = new Date().toISOString();
+      const results = await database.batch([
+        ...transferDeletedOwnerStatements(database, target, email, now, crypto.randomUUID()),
         database.prepare(`UPDATE players SET account_email = NULL WHERE account_email = ?`).bind(target),
         database.prepare(`DELETE FROM tournament_moderators WHERE moderator_email = ?`).bind(target),
         database
@@ -1539,11 +1541,20 @@ export async function POST(request: Request) {
           .prepare(
             `INSERT INTO moderation_audit_log
                (id, actor_email, action, target_email, detail, created_at)
-             VALUES (?, ?, 'delete_account', ?, 'account permanently deleted', ?)`,
+             VALUES (?, ?, 'delete_account', ?, ?, ?)`,
           )
-          .bind(crypto.randomUUID(), email, target, new Date().toISOString()),
+          .bind(
+            crypto.randomUUID(),
+            email,
+            target,
+            "Owned tournaments transferred automatically; account permanently deleted",
+            now,
+          ),
       ]);
-      return Response.json({ ok: true });
+      return Response.json({
+        ok: true,
+        transferredTournamentCount: Number(results[0].meta?.changes ?? 0),
+      });
     }
 
     if (body.action === "remove_tournament_moderator") {
@@ -1915,6 +1926,45 @@ export async function POST(request: Request) {
         { error: "You can only manage tournaments you own or are assigned to." },
         { status: 403 },
       );
+    }
+
+    if (body.action === "change_organizer") {
+      if (globalRole !== "superadmin" && globalRole !== "moderator") {
+        return Response.json({ error: "Moderator access required." }, { status: 403 });
+      }
+      const target = normalizeEmail(cleanText(body.email, 254));
+      if (target === normalizeEmail(tournament.ownerEmail)) {
+        return Response.json({ error: "This account is already the organizer." }, { status: 409 });
+      }
+      const transferId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      // Validate the recipient and capture the current organizer in the same
+      // transaction as the handover. No stale account or ownership reads.
+      const results = await database.batch([
+        database.prepare(
+          `INSERT INTO moderation_audit_log
+             (id, actor_email, action, target_email, tournament_id, detail, created_at)
+           SELECT ?, ?, 'transfer_tournament_ownership', ua.email, t.id,
+                  'Previous organizer: ' || t.owner_email || '. Changed by staff.', ?
+           FROM tournaments t JOIN user_accounts ua ON ua.email = ?
+           JOIN auth_credentials ac ON ac.email = ua.email
+           LEFT JOIN moderation_accounts ma ON ma.email = ua.email
+           WHERE t.id = ? AND COALESCE(ma.status, 'active') = 'active'
+             AND t.owner_email <> ua.email`,
+        ).bind(transferId, email, now, target, tournamentId),
+        database.prepare(
+          `UPDATE tournaments SET owner_email = ? WHERE id = ?
+           AND EXISTS (SELECT 1 FROM moderation_audit_log WHERE id = ?)`,
+        ).bind(target, tournamentId, transferId),
+        database.prepare(
+          `DELETE FROM tournament_moderators WHERE tournament_id = ? AND moderator_email = ?
+           AND EXISTS (SELECT 1 FROM moderation_audit_log WHERE id = ?)`,
+        ).bind(tournamentId, target, transferId),
+      ]);
+      if (!Number(results[0].meta?.changes ?? 0)) {
+        return Response.json({ error: "Choose a different registered, active account." }, { status: 409 });
+      }
+      return Response.json({ ok: true, tournamentId });
     }
 
     if (body.action === "update_tournament") {

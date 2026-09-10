@@ -139,6 +139,19 @@ the account or its role/ownership records to work around the registration guard.
 
 ## Security changes (September 2026)
 
+Deleting an account automatically hands its tournaments to an active assigned
+moderator, then another active site moderator, then the superadmin. Within each
+group, the earliest assignment or moderator grant wins, with email as the tie-breaker.
+Accounts without login credentials and banned accounts are excluded. Ownership
+transfers, audit records, and account deletion succeed or roll back together;
+players and historical results remain. Only the superadmin can delete accounts.
+
+Site moderators and the superadmin can send the `change_organizer` action to
+`/api/manager` with `tournamentId` and the new owner's `email` to transfer ownership
+to a registered, active account. The existing interface is unchanged. The previous
+organizer loses owner access; any independent moderator permissions remain.
+Every change is recorded in the moderation activity log.
+
 Deploy migration `0012_roster_security_guards.sql` before the updated Worker.
 It enforces roster capacity atomically for new entries across both guest registration
 endpoints; it preserves existing data. The normal `npm run deploy` migration step

@@ -177,7 +177,7 @@ test("production deploy applies and verifies migrations before publishing", asyn
   const packageJson = JSON.parse(await source("package.json"));
   assert.match(packageJson.scripts.deploy, /^npm run db:migrate:remote/);
   assert.match(packageJson.scripts.deploy, /npm run db:verify:remote/);
-  assert.match(packageJson.scripts.deploy, /vinext deploy --skip-build$/);
+  assert.match(packageJson.scripts.deploy, /vinext-cloudflare deploy --skip-build$/);
   assert.match(packageJson.scripts["db:verify:remote"], /auth_credentials/);
   assert.match(packageJson.scripts["db:verify:remote"], /player_sessions/);
 });

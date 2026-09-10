@@ -263,6 +263,86 @@ test("site moderation controls remain superadmin-only and are visible in the pri
   assert.ok(publicDirectory.data.publicStaff.every((entry) => !Object.hasOwn(entry, "email")));
 });
 
+test("account deletion transfers owned tournaments to assigned and site moderators", async () => {
+  const admin = await account("transfer-admin");
+  process.env.SUPERADMIN_EMAIL = admin.email;
+  const ordinaryOwner = await account("transfer-owner");
+  const moderatorOwner = await account("transfer-moderator-owner");
+  const successor = await account("transfer-successor");
+
+  for (const moderator of [moderatorOwner, successor]) {
+    const granted = await post(manager, {
+      action: "grant_moderator",
+      email: moderator.email,
+    }, admin.cookie);
+    assert.equal(granted.status, 200, JSON.stringify(granted.data));
+  }
+
+  const delegatedEvent = await tournament(
+    ordinaryOwner.cookie,
+    "Delegated ownership event",
+  );
+  const fallbackEvent = await tournament(
+    moderatorOwner.cookie,
+    "Superadmin fallback event",
+  );
+  const delegated = await post(manager, {
+    action: "join_tournament_delegation",
+    tournamentId: delegatedEvent.id,
+  }, successor.cookie);
+  assert.equal(delegated.status, 200, JSON.stringify(delegated.data));
+
+  const ordinaryDeletion = await post(manager, {
+    action: "delete_account",
+    email: ordinaryOwner.email,
+  }, admin.cookie);
+  assert.equal(ordinaryDeletion.status, 200, JSON.stringify(ordinaryDeletion.data));
+  assert.equal(ordinaryDeletion.data.transferredTournamentCount, 1);
+  assert.equal(
+    database.prepare("SELECT owner_email FROM tournaments WHERE id = ?")
+      .get(delegatedEvent.id).owner_email,
+    successor.email,
+  );
+  assert.equal(
+    database.prepare(
+      "SELECT COUNT(*) AS count FROM tournament_moderators WHERE tournament_id = ? AND moderator_email = ?",
+    ).get(delegatedEvent.id, successor.email).count,
+    0,
+  );
+
+  const moderatorDeletion = await post(manager, {
+    action: "delete_account",
+    email: moderatorOwner.email,
+  }, admin.cookie);
+  assert.equal(moderatorDeletion.status, 200, JSON.stringify(moderatorDeletion.data));
+  assert.equal(moderatorDeletion.data.transferredTournamentCount, 1);
+  assert.equal(
+    database.prepare("SELECT owner_email FROM tournaments WHERE id = ?")
+      .get(fallbackEvent.id).owner_email,
+    database.prepare("SELECT email FROM moderators ORDER BY created_at, email LIMIT 1").get().email,
+  );
+  assert.equal(
+    database.prepare("SELECT COUNT(*) AS count FROM user_accounts WHERE email IN (?, ?)")
+      .get(ordinaryOwner.email, moderatorOwner.email).count,
+    0,
+  );
+
+  const transfers = database.prepare(
+    `SELECT target_email AS targetEmail, tournament_id AS tournamentId
+     FROM moderation_audit_log
+     WHERE action = 'transfer_tournament_ownership'
+       AND tournament_id IN (?, ?)
+     ORDER BY tournament_id`,
+  ).all(delegatedEvent.id, fallbackEvent.id);
+  assert.deepEqual(
+    new Map(transfers.map((entry) => [entry.tournamentId, entry.targetEmail])),
+    new Map([
+      [delegatedEvent.id, successor.email],
+      [fallbackEvent.id, database.prepare("SELECT owner_email FROM tournaments WHERE id = ?").get(fallbackEvent.id).owner_email],
+    ]),
+  );
+});
+
 test("real name collisions are permitted across registration paths", async () => {
   const owner = await account("duplicate-owner");
   const event = await tournament(owner.cookie, "Duplicate rules event");
