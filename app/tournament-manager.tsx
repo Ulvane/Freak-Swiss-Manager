@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   Archive,
   ArrowRight,
@@ -154,6 +154,44 @@ function isNoShowResult(result: ResultCode) {
   return result === "1F-0F" || result === "0F-1F" || result === "0F-0F";
 }
 
+const tournamentTabValues = ["pairings", "standings", "crosstable", "players"] as const;
+type TournamentTab = (typeof tournamentTabValues)[number];
+const adminTabValues = ["overview", "accounts", "moderators", "guests", "tokens", "activity"] as const;
+type AdminTab = (typeof adminTabValues)[number];
+const savedTabListeners = new Set<() => void>();
+
+function readSavedTab<T extends string>(key: string, allowed: readonly T[]): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = window.sessionStorage.getItem(key);
+    return allowed.includes(saved as T) ? saved as T : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveTab(key: string, value: string) {
+  try {
+    window.sessionStorage.setItem(key, value);
+    savedTabListeners.forEach((listener) => listener());
+  } catch {
+    // Storage can be disabled without affecting the controls.
+  }
+}
+
+function subscribeToSavedTabs(listener: () => void) {
+  savedTabListeners.add(listener);
+  return () => savedTabListeners.delete(listener);
+}
+
+function useSavedTab<T extends string>(key: string, allowed: readonly T[], fallback: T) {
+  return useSyncExternalStore(
+    subscribeToSavedTabs,
+    () => readSavedTab(key, allowed) ?? fallback,
+    () => fallback,
+  );
+}
+
 export function TournamentManager({ signInPath, signOutPath }: Props) {
   const { language } = useLanguage();
   const isTr = language === "tr";
@@ -283,6 +321,14 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
 
   const snapshot = payload.snapshot;
   const tournament = snapshot?.tournament;
+  const tournamentTabKey = tournament
+    ? `freak-swiss-tournament-tab:${tournament.id}`
+    : "freak-swiss-tournament-tab:none";
+  const tournamentTab = useSavedTab<TournamentTab>(
+    tournamentTabKey,
+    tournamentTabValues,
+    tournament?.currentRound ? "pairings" : "players",
+  );
   const guestEntry = useMemo(
     () => (tournament ? getGuestRegistration(tournament.id) : null),
     [tournament],
@@ -1246,7 +1292,13 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
               <div className="data-surface">
                 <Tabs
                   key={tournament?.id}
-                  defaultValue={tournament?.currentRound ? "pairings" : "players"}
+                  value={tournamentTab}
+                  onValueChange={(value) => {
+                    const next = value as TournamentTab;
+                    if (tournament) {
+                      saveTab(`freak-swiss-tournament-tab:${tournament.id}`, next);
+                    }
+                  }}
                 >
                   <div className="surface-toolbar">
                     <TabsList variant="line" className="swiss-tabs">
@@ -2974,6 +3026,11 @@ function SuperadminDirectory({
 }) {
   const now = new Date(payload.serverTime).getTime();
   const activeBans = payload.accounts.filter((account) => account.isBanned).length;
+  const adminTab = useSavedTab<AdminTab>(
+    "freak-swiss-admin-tab",
+    adminTabValues,
+    "overview",
+  );
   const [selectedGuestIds, setSelectedGuestIds] = useState<string[]>([]);
   const selectedGuests = payload.guests.filter((guest) => selectedGuestIds.includes(guest.playerId));
   const allGuestsSelected = payload.guests.length > 0 && selectedGuests.length === payload.guests.length;
@@ -3083,7 +3140,14 @@ function SuperadminDirectory({
         Moderators can run every tournament and manage pairings, players, and
         results; only you can change staff, accounts, guests, or site access.
       </p>
-      <Tabs defaultValue="overview" className="admin-tabs">
+      <Tabs
+        value={adminTab}
+        onValueChange={(value) => {
+          const next = value as AdminTab;
+          saveTab("freak-swiss-admin-tab", next);
+        }}
+        className="admin-tabs"
+      >
         <TabsList variant="line" className="admin-tabs-list" aria-label="Superadmin sections">
           <TabsTrigger value="overview"><span>01</span> Overview</TabsTrigger>
           <TabsTrigger value="accounts"><span>02</span> Accounts</TabsTrigger>

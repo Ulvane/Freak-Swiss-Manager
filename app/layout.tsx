@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { LanguageProvider } from "./language-provider";
+import { ReloadState } from "@/components/reload-state";
 
 export const metadata: Metadata = {
   title: "Freak Swiss Manager — Swiss Manager K Edition",
@@ -26,6 +27,7 @@ export default function RootLayout({
               try {
                 let theme = localStorage.getItem('freak-swiss-theme');
                 let mode = localStorage.getItem('freak-swiss-mode');
+                if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
                 if (!mode && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
                   mode = 'dark';
                 }
@@ -38,6 +40,7 @@ export default function RootLayout({
       </head>
       <body>
         <LanguageProvider>
+          <ReloadState />
           {children}
         </LanguageProvider>
       </body>
