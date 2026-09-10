@@ -318,3 +318,80 @@ export const pairings = sqliteTable(
     ),
   ],
 );
+
+export const antiAbuseRecords = sqliteTable(
+  "anti_abuse_records",
+  {
+    id: text("id").primaryKey(),
+    browserHash: text("browser_hash").notNull(),
+    bannedAccountEmail: text("banned_account_email"),
+    bannedPlayerId: text("banned_player_id"),
+    ip: text("ip"),
+    reason: text("reason"),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("anti_abuse_records_browser_hash_idx").on(table.browserHash),
+    index("anti_abuse_records_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
+export const accountBrowserLinks = sqliteTable(
+  "account_browser_links",
+  {
+    id: text("id").primaryKey(),
+    email: text("email")
+      .notNull()
+      .references(() => userAccounts.email, { onDelete: "cascade" }),
+    browserHash: text("browser_hash").notNull(),
+    ip: text("ip"),
+    lastSeenAt: text("last_seen_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("account_browser_links_unique").on(table.email, table.browserHash),
+    index("account_browser_links_browser_hash_idx").on(table.browserHash),
+    index("account_browser_links_last_seen_idx").on(table.lastSeenAt),
+  ],
+);
+
+export const playerBrowserLinks = sqliteTable(
+  "player_browser_links",
+  {
+    id: text("id").primaryKey(),
+    playerId: text("player_id")
+      .notNull()
+      .references(() => players.id, { onDelete: "cascade" }),
+    browserHash: text("browser_hash").notNull(),
+    ip: text("ip"),
+    lastSeenAt: text("last_seen_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("player_browser_links_unique").on(table.playerId, table.browserHash),
+    index("player_browser_links_browser_hash_idx").on(table.browserHash),
+    index("player_browser_links_last_seen_idx").on(table.lastSeenAt),
+  ],
+);
+
+export const visitorLogs = sqliteTable(
+  "visitor_logs",
+  {
+    id: integer("id", { mode: "number" }).primaryKey({ autoIncrement: true }),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    method: text("method"),
+    path: text("path"),
+    referer: text("referer"),
+    country: text("country"),
+    city: text("city"),
+    region: text("region"),
+    latitude: text("latitude"),
+    longitude: text("longitude"),
+    createdAt: text("created_at"),
+  },
+  (table) => [
+    index("idx_visitor_logs_ip").on(table.ip),
+    index("idx_visitor_logs_created").on(table.createdAt),
+    index("idx_visitor_logs_ip_path_created").on(table.ip, table.path, table.createdAt),
+  ],
+);

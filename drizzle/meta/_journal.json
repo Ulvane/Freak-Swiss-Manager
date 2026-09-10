@@ -99,6 +99,20 @@
       "when": 1789030812205,
       "tag": "0013_remove_fide_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789040000000,
+      "tag": "0014_anti_abuse_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789056000000,
+      "tag": "0015_guest_browser_links",
+      "breakpoints": true
     }
   ]
 }

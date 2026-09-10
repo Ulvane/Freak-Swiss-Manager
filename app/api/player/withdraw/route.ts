@@ -2,6 +2,7 @@ import { getAuthenticatedUser, normalizeEmail } from "@/app/auth-server";
 import { getDatabase } from "@/db/raw";
 import { verifyGuestToken } from "@/lib/guest-tokens";
 import { readJsonRequest } from "@/lib/request-security";
+import { browserTokenHeaders, checkRequestBanned, recordVisitorLog } from "@/lib/anti-abuse";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,17 @@ function cleanText(value: unknown, maxLength: number) {
 // pending future-round statuses are cleared.
 export async function POST(request: Request) {
   try {
+    const database = getDatabase();
+    const { banned, telemetry, rawBrowserToken, isNewToken } =
+      await checkRequestBanned(request, database);
+    if (banned) {
+      await recordVisitorLog(database, telemetry);
+      return Response.json(
+        { error: "Your access to this site has been blocked.", banned: true },
+        { status: 403, headers: browserTokenHeaders(request, rawBrowserToken, isNewToken) },
+      );
+    }
+
     const parsed = await readJsonRequest(request);
     if (parsed instanceof Response) return parsed;
     const body = parsed as WithdrawBody;
@@ -35,9 +47,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "Tournament not found." }, { status: 400 });
     }
 
-    const database = getDatabase();
     let playerId: string | null = null;
-
     const user = await getAuthenticatedUser();
     if (user) {
       const email = normalizeEmail(user.email);

@@ -56,7 +56,9 @@ async function post(route, body, cookie = '') {
   const response = await route.POST(new Request('https://test.invalid/api/manager', {
     method: 'POST', headers: {'content-type': 'application/json', cookie}, body: JSON.stringify(body),
   }));
-  return { status: response.status, cookie: response.headers.get('set-cookie')?.split(';')[0] ?? '', data: await response.json() };
+  const setCookies = response.headers.getSetCookie?.() ?? [response.headers.get('set-cookie')].filter(Boolean);
+  const preferred = setCookies.find(value => /^freak_swiss_(?:player_)?session=/.test(value)) ?? setCookies[0];
+  return { status: response.status, cookie: preferred?.split(';')[0] ?? '', data: await response.json() };
 }
 
 test('real registration/login and owner controls work against a fully migrated database', async () => {

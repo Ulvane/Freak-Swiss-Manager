@@ -1,3 +1,4 @@
+import { normalizePersonName, isValidPersonName, PERSON_NAME_ERROR } from "@/lib/person-name";
 import {
   createPasswordRecord,
   createSession,
@@ -9,6 +10,13 @@ import {
 } from "@/app/auth-server";
 import { getDatabase } from "@/db/raw";
 import { readJsonRequest } from "@/lib/request-security";
+import {
+  browserTokenCookie,
+  browserTokenHeaders,
+  checkRequestBanned,
+  recordAccountBrowser,
+  recordVisitorLog,
+} from "@/lib/anti-abuse";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +28,18 @@ type RegistrationBody = {
 
 export async function POST(request: Request) {
   try {
+    const database = getDatabase();
+    const { banned, telemetry, rawBrowserToken, browserHash, isNewToken } =
+      await checkRequestBanned(request, database);
+
+    if (banned) {
+      await recordVisitorLog(database, telemetry);
+      return Response.json(
+        { error: "Your access to this site has been blocked.", banned: true },
+        { status: 403, headers: browserTokenHeaders(request, rawBrowserToken, isNewToken) },
+      );
+    }
+
     const parsed = await readJsonRequest(request);
     if (parsed instanceof Response) return parsed;
     const body = parsed as RegistrationBody;
@@ -27,11 +47,11 @@ export async function POST(request: Request) {
       return Response.json({ error: "Invalid request." }, { status: 400 });
     }
     const email = normalizeEmail(body.email || "");
-    const displayName = typeof body.displayName === "string" ? body.displayName.trim().slice(0, 80) : "";
+    const displayName = normalizePersonName(body.displayName);
     const password = typeof body.password === "string" ? body.password : "";
 
-    if (!displayName) {
-      return Response.json({ error: "Enter your name." }, { status: 400 });
+    if (!isValidPersonName(displayName, 80)) {
+      return Response.json({ error: PERSON_NAME_ERROR }, { status: 400 });
     }
     if (!isValidEmail(email)) {
       return Response.json({ error: "Enter a valid email address." }, { status: 400 });
@@ -46,7 +66,6 @@ export async function POST(request: Request) {
       return Response.json({ error: "This account must be provisioned by the site administrator." }, { status: 403 });
     }
 
-    const database = getDatabase();
     const existing = await database
       .prepare(`SELECT email FROM user_accounts WHERE email = ?
                 UNION ALL SELECT email FROM moderators WHERE email = ?
@@ -88,11 +107,16 @@ export async function POST(request: Request) {
         ),
     ]);
 
+    await recordAccountBrowser(database, email, browserHash, telemetry.ip);
+
     const token = await createSession(email);
     const secure = new URL(request.url).protocol === "https:";
+    const headers = new Headers();
+    headers.append("set-cookie", sessionCookie(token, secure));
+    headers.append("set-cookie", browserTokenCookie(rawBrowserToken, secure));
     return Response.json(
       { ok: true },
-      { headers: { "set-cookie": sessionCookie(token, secure) } },
+      { headers },
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -1,7 +1,15 @@
+import { normalizePersonName, isValidPersonName, PERSON_NAME_ERROR } from "@/lib/person-name";
 import { getDatabase } from "@/db/raw";
 import { guestExpiryFrom } from "@/lib/guest-players";
 import { createGuestToken } from "@/lib/guest-tokens";
 import { readJsonRequest, registrationConflict } from "@/lib/request-security";
+import {
+  browserTokenCookie,
+  browserTokenHeaders,
+  checkRequestBanned,
+  recordPlayerBrowser,
+  recordVisitorLog,
+} from "@/lib/anti-abuse";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +36,18 @@ function cleanText(value: unknown, maxLength: number) {
 // user_accounts row.
 export async function POST(request: Request) {
   try {
+    const database = getDatabase();
+    const { banned, telemetry, rawBrowserToken, browserHash, isNewToken } =
+      await checkRequestBanned(request, database);
+
+    if (banned) {
+      await recordVisitorLog(database, telemetry);
+      return Response.json(
+        { error: "Your access to this site has been blocked.", banned: true },
+        { status: 403, headers: browserTokenHeaders(request, rawBrowserToken, isNewToken) },
+      );
+    }
+
     const parsed = await readJsonRequest(request);
     if (parsed instanceof Response) return parsed;
     const body = parsed as GuestJoinBody;
@@ -41,7 +61,6 @@ export async function POST(request: Request) {
       return Response.json({ error: "Enter a tournament code." }, { status: 400 });
     }
 
-    const database = getDatabase();
     const tournament = directId
       ? await database
           .prepare(
@@ -68,9 +87,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const name = cleanText(body.name, 100);
-    if (name.length < 2) {
-      return Response.json({ error: "Enter your name to join." }, { status: 400 });
+    const name = normalizePersonName(body.name);
+    if (!isValidPersonName(name)) {
+      return Response.json({ error: PERSON_NAME_ERROR }, { status: 400 });
     }
     const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
 
@@ -101,6 +120,13 @@ export async function POST(request: Request) {
       tournamentId: tournament.id,
       createdAt,
     });
+    await recordPlayerBrowser(database, playerId, browserHash, telemetry.ip);
+
+    const secure = new URL(request.url).protocol === "https:";
+    const headers = new Headers();
+    if (isNewToken) {
+      headers.append("set-cookie", browserTokenCookie(rawBrowserToken, secure));
+    }
 
     return Response.json(
       {
@@ -110,7 +136,7 @@ export async function POST(request: Request) {
         guestToken: token,
         guestTokenExpiresAt: expiresAt,
       },
-      { status: 201 },
+      { status: 201, headers },
     );
   } catch (error) {
     const conflict = registrationConflict(error);

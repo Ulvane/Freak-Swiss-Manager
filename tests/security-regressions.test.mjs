@@ -65,11 +65,13 @@ async function post(route, body, cookie = '', headers = {}) {
   const response = await cookies.run(store, () => route.POST(new Request('https://test.invalid/api/test', {
     method: 'POST', headers: { 'content-type': 'application/json', cookie, ...headers }, body: JSON.stringify(body),
   })));
-  return { status: response.status, cookie: response.headers.get('set-cookie')?.split(';')[0] ?? '', data: await response.json() };
+  const setCookies = response.headers.getSetCookie?.() ?? [response.headers.get('set-cookie')].filter(Boolean);
+  const preferred = setCookies.find(value => /^freak_swiss_(?:player_)?session=/.test(value)) ?? setCookies[0];
+  return { status: response.status, cookie: preferred?.split(';')[0] ?? '', data: await response.json() };
 }
 async function account(label) {
   const email = `${label}@example.test`;
-  const result = await post(register, { displayName: label, email, password: 'secure-test-password' });
+  const result = await post(register, { displayName: label.replace(/-/g, ' '), email, password: 'secure-test-password' });
   assert.equal(result.status, 200, JSON.stringify(result.data));
   return { email, cookie: result.cookie };
 }
@@ -95,6 +97,7 @@ test('an existing identity without credentials cannot be reclaimed through regis
   assert.equal(db.prepare('SELECT display_name FROM user_accounts WHERE email = ?').get('legacy-owner@example.test').display_name, 'Original owner');
 });
 
+
 test('login and mutations reject cross-origin requests and form-compatible content types', async () => {
   const owner = await account('csrf-owner');
   const credentials = { email: owner.email, password: 'secure-test-password' };
@@ -114,7 +117,8 @@ test('GET logout cannot delete a session', async () => {
 
 test('legacy guest registration enforces the same player limit as the main endpoint', async () => {
   const tournament = await event('capacity-legacy');
-  for (let i = 0; i < 2; i++) assert.equal((await post(manager, { action: 'join_tournament', tournamentId: tournament.id, name: `Player ${i}` })).status, 201);
+  const names = ['First Player', 'Second Player'];
+  for (let i = 0; i < 2; i++) assert.equal((await post(manager, { action: 'join_tournament', tournamentId: tournament.id, name: names[i] })).status, 201);
   assert.equal((await post(manager, { action: 'join_tournament', tournamentId: tournament.id, name: 'Blocked player' })).status, 409);
   assert.equal((await post(legacyJoin, { tournamentId: tournament.id, name: 'Bypass player' })).status, 409);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM players WHERE tournament_id = ?').get(tournament.id).n, 2);
@@ -122,12 +126,12 @@ test('legacy guest registration enforces the same player limit as the main endpo
 
 test('simultaneous registrations cannot overfill a tournament', async () => {
   const tournament = await event('capacity-race');
-  const results = await Promise.all(Array.from({ length: 8 }, (_, i) => post(manager, { action: 'join_tournament', tournamentId: tournament.id, name: `Concurrent ${i}` })));
+  const letters = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta'];
+  const results = await Promise.all(Array.from({ length: 8 }, (_, i) => post(manager, { action: 'join_tournament', tournamentId: tournament.id, name: `${letters[i]} Player` })));
   assert.equal(results.filter(r => r.status === 201).length, 2);
   assert.ok(results.every(r => r.status === 201 || r.status === 409));
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM players WHERE tournament_id = ?').get(tournament.id).n, 2);
 });
-
 
 test('concurrent bad passwords cannot bypass the seven-attempt lockout', async () => {
   const owner = await account('login-race');

@@ -5,6 +5,7 @@ import handler from "vinext/server/app-router-entry";
 import { cleanupExpiredGuestPlayers } from "../lib/guest-players";
 import { cleanupExpiredPlayerSessions } from "../lib/player-session";
 import { guardApiRequest, withSecurityHeaders, type SecurityBindings } from "../lib/edge-security";
+import { cleanupExpiredAntiAbuse } from "../lib/anti-abuse";
 
 interface Env extends SecurityBindings {
   ASSETS: Fetcher;
@@ -58,6 +59,7 @@ const worker = {
 async function cleanupScheduledData(database: D1Database) {
   await cleanupExpiredGuestPlayers(database);
   await cleanupExpiredPlayerSessions(database);
+  await cleanupExpiredAntiAbuse(database);
   await database.prepare(`DELETE FROM guest_tokens WHERE expires_at <= ?`)
     .bind(new Date().toISOString()).run();
 }

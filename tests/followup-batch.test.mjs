@@ -89,9 +89,11 @@ async function post(route, body, cookie = "") {
       body: JSON.stringify(body),
     }),
   );
+  const setCookies = response.headers.getSetCookie?.() ?? [response.headers.get("set-cookie")].filter(Boolean);
+  const preferred = setCookies.find((value) => /^freak_swiss_(?:player_)?session=/.test(value)) ?? setCookies[0];
   return {
     status: response.status,
-    cookie: response.headers.get("set-cookie")?.split(";")[0] ?? "",
+    cookie: preferred?.split(";")[0] ?? "",
     data: await response.json(),
   };
 }
@@ -110,10 +112,11 @@ async function getManager(cookie = "") {
 async function account(label) {
   const email = `${label}@example.test`;
   const response = await post(register, {
-    displayName: label,
+    displayName: label.replace(/-/g, " "),
     email,
     password: `${label}-test-password`,
   });
+
   assert.equal(response.status, 200, JSON.stringify(response.data));
   return { email, cookie: response.cookie };
 }
@@ -387,15 +390,17 @@ test("real name collisions are permitted across registration paths", async () =>
 test("late entrants join between rounds and latest-round correction preserves earlier history", async () => {
   const owner = await account("late-owner");
   const event = await tournament(owner.cookie, "Late entry event");
+  const starterNames = ["Starter Alpha", "Starter Beta", "Starter Gamma", "Starter Delta"];
   for (let index = 1; index <= 4; index += 1) {
     const added = await post(manager, {
       action: "add_player",
       tournamentId: event.id,
-      name: `Starter ${index}`,
+      name: starterNames[index - 1],
       rating: 2100 - index * 50,
     }, owner.cookie);
     assert.equal(added.status, 201, JSON.stringify(added.data));
   }
+
   for (const player of database.prepare("SELECT id FROM players WHERE tournament_id = ?").all(event.id)) {
     assert.equal((await post(manager, {
       action: "set_player_checked_in",

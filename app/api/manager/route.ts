@@ -1,9 +1,20 @@
+import { normalizePersonName, isValidPersonName, PERSON_NAME_ERROR } from "@/lib/person-name";
 import {
   getAuthenticatedUser,
   isSuperadmin,
   normalizeEmail,
 } from "@/app/auth-server";
 import { getDatabase } from "@/db/raw";
+import {
+  banAccountBrowsers,
+  banPlayerBrowsers,
+  browserTokenHeaders,
+  checkRequestBanned,
+  recordPlayerBrowser,
+  recordVisitorLog,
+  unbanAccountBrowsers,
+} from "@/lib/anti-abuse";
+
 import { guestExpiryFrom } from "@/lib/guest-players";
 import {
   createPlayerSessionToken,
@@ -811,6 +822,17 @@ async function loadManagerPayload(request: Request, tournamentId?: string | null
 
 export async function GET(request: Request) {
   try {
+    const database = getDatabase();
+    const { banned, telemetry, rawBrowserToken, isNewToken } =
+      await checkRequestBanned(request, database);
+    if (banned) {
+      await recordVisitorLog(database, telemetry);
+      return Response.json(
+        { error: "Your access to this site has been blocked.", banned: true },
+        { status: 403, headers: browserTokenHeaders(request, rawBrowserToken, isNewToken) },
+      );
+    }
+
     const tournamentId = new URL(request.url).searchParams.get("t");
     return Response.json(await loadManagerPayload(request, tournamentId), {
       headers: { "Cache-Control": "private, no-store" },
@@ -910,6 +932,17 @@ type ManagerAction =
 
 export async function POST(request: Request) {
   try {
+    const database = getDatabase();
+    const { banned, telemetry, rawBrowserToken, browserHash, isNewToken } =
+      await checkRequestBanned(request, database);
+    if (banned) {
+      await recordVisitorLog(database, telemetry);
+      return Response.json(
+        { error: "Your access to this site has been blocked.", banned: true },
+        { status: 403, headers: browserTokenHeaders(request, rawBrowserToken, isNewToken) },
+      );
+    }
+
     const parsed = await readJsonRequest(request);
     if (parsed instanceof Response) return parsed;
     const body = parsed as ManagerAction;
@@ -918,8 +951,8 @@ export async function POST(request: Request) {
     }
 
     const user = await getAuthenticatedUser();
-    const database = getDatabase();
     const email = user ? normalizeEmail(user.email) : null;
+
     const suppliedPlayerToken = playerSessionTokenFromRequest(request);
     let validSuppliedPlayerToken = isValidPlayerSessionToken(suppliedPlayerToken)
       ? suppliedPlayerToken
@@ -994,12 +1027,18 @@ export async function POST(request: Request) {
               .first<{ id: string }>()
           : null;
       if (existing) {
-        return Response.json({ ok: true, tournamentId: tournament.id, playerId: existing.id });
+        if (!email) {
+          await recordPlayerBrowser(database, existing.id, browserHash, telemetry.ip);
+        }
+        return Response.json(
+          { ok: true, tournamentId: tournament.id, playerId: existing.id },
+          { headers: browserTokenHeaders(request, rawBrowserToken, isNewToken) },
+        );
       }
 
-      const name = cleanText(body.name, 100) || user?.displayName || "";
-      if (name.length < 2) {
-        return Response.json({ error: "Player name is too short." }, { status: 400 });
+      const name = normalizePersonName(body.name ?? user?.displayName);
+      if (!isValidPersonName(name)) {
+        return Response.json({ error: PERSON_NAME_ERROR }, { status: 400 });
       }
 
       const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
@@ -1045,19 +1084,31 @@ export async function POST(request: Request) {
               playerSessionExpiryFrom(now),
               now.toISOString(),
             ),
+          database
+            .prepare(
+              `INSERT INTO player_browser_links
+                 (id, player_id, browser_hash, ip, last_seen_at)
+               VALUES (?, ?, ?, ?, ?)`,
+            )
+            .bind(
+              crypto.randomUUID(),
+              playerId,
+              browserHash,
+              telemetry.ip,
+              now.toISOString(),
+            ),
         );
       }
 
       await database.batch(statements);
       const secure = new URL(request.url).protocol === "https:";
+      const headers = browserTokenHeaders(request, rawBrowserToken, isNewToken);
+      if (issuedPlayerToken) {
+        headers.append("set-cookie", playerSessionCookie(issuedPlayerToken, secure));
+      }
       return Response.json(
         { ok: true, tournamentId: tournament.id, playerId },
-        {
-          status: 201,
-          headers: issuedPlayerToken
-            ? { "set-cookie": playerSessionCookie(issuedPlayerToken, secure) }
-            : undefined,
-        },
+        { status: 201, headers },
       );
     }
 
@@ -1458,33 +1509,51 @@ export async function POST(request: Request) {
       if (!account) return Response.json({ error: "Account not found." }, { status: 404 });
       const banned = Boolean(body.banned);
       const now = new Date().toISOString();
-      await database.batch([
-        database
-          .prepare(
-            `INSERT INTO moderation_accounts (email, status, banned_at, banned_by_email, ban_reason)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(email) DO UPDATE SET
-               status = excluded.status, banned_at = excluded.banned_at,
-               banned_by_email = excluded.banned_by_email, ban_reason = excluded.ban_reason`,
-          )
-          .bind(target, banned ? "banned" : "active", banned ? now : null, banned ? email : null, banned ? cleanText(body.reason, 240) || null : null),
-        ...(banned
-          ? [
-              database.prepare(`DELETE FROM moderators WHERE email = ?`).bind(target),
-              database.prepare(`DELETE FROM tournament_moderators WHERE moderator_email = ?`).bind(target),
-              database.prepare(`DELETE FROM auth_sessions WHERE email = ?`).bind(target),
-            ]
-          : []),
-        database
-          .prepare(
-            `INSERT INTO moderation_audit_log
-               (id, actor_email, action, target_email, detail, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-          )
-          .bind(crypto.randomUUID(), email, banned ? "ban_account" : "unban_account", target, cleanText(body.reason, 240) || null, now),
-      ]);
+      if (banned) {
+        await database.batch([
+          database
+            .prepare(
+              `INSERT INTO moderation_accounts (email, status, banned_at, banned_by_email, ban_reason)
+               VALUES (?, 'banned', ?, ?, ?)
+               ON CONFLICT(email) DO UPDATE SET
+                 status = 'banned', banned_at = excluded.banned_at,
+                 banned_by_email = excluded.banned_by_email, ban_reason = excluded.ban_reason`,
+            )
+            .bind(target, now, email, cleanText(body.reason, 240) || null),
+          database.prepare(`DELETE FROM moderators WHERE email = ?`).bind(target),
+          database.prepare(`DELETE FROM tournament_moderators WHERE moderator_email = ?`).bind(target),
+          database.prepare(`DELETE FROM auth_sessions WHERE email = ?`).bind(target),
+          database
+            .prepare(
+              `INSERT INTO moderation_audit_log
+                 (id, actor_email, action, target_email, detail, created_at)
+               VALUES (?, ?, 'ban_account', ?, ?, ?)`,
+            )
+            .bind(crypto.randomUUID(), email, target, cleanText(body.reason, 240) || null, now),
+        ]);
+        await banAccountBrowsers(
+          database,
+          target,
+          cleanText(body.reason, 240) || undefined,
+          telemetry.ip,
+        );
+      } else {
+        await database.batch([
+          database.prepare(`DELETE FROM moderation_accounts WHERE email = ?`).bind(target),
+          database
+            .prepare(
+              `INSERT INTO moderation_audit_log
+                 (id, actor_email, action, target_email, detail, created_at)
+               VALUES (?, ?, 'unban_account', ?, ?, ?)`,
+            )
+            .bind(crypto.randomUUID(), email, target, cleanText(body.reason, 240) || null, now),
+        ]);
+        await unbanAccountBrowsers(database, target);
+      }
+
       return Response.json({ ok: true });
     }
+
 
     if (body.action === "revoke_account_sessions") {
       if (!isSuperadmin(email)) {
@@ -1803,6 +1872,7 @@ export async function POST(request: Request) {
             )
             .bind(crypto.randomUUID(), email, guestTournamentId, `guest ${guestPlayerId}`, now),
         ]);
+        await banPlayerBrowsers(database, guestPlayerId, "Guest kicked from tournament");
       } else {
         if (Number(guest.currentRound) > 0) {
           await database.batch([
@@ -2118,10 +2188,10 @@ export async function POST(request: Request) {
           { status: 409 },
         );
       }
-      const name = cleanText(body.name, 100);
+      const name = normalizePersonName(body.name);
       const rating = Math.max(0, Math.min(4000, Number(body.rating) || 0));
-      if (name.length < 2) {
-        return Response.json({ error: "Player name is too short." }, { status: 400 });
+      if (!isValidPersonName(name)) {
+        return Response.json({ error: PERSON_NAME_ERROR }, { status: 400 });
       }
       
       if (tournament.playerLimit !== null) {

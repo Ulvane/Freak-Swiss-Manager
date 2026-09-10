@@ -23,6 +23,8 @@ import {
 } from "@/lib/malatya-benchmark";
 import { MALATYA_ROUND_ONE_AUDIT_STATS } from "@/lib/malatya-benchmark-audit-stats";
 import type { ResultCode } from "@/lib/tournament-types";
+import { checkServerBan } from "@/lib/anti-abuse";
+import { BannedScreen } from "@/components/banned-screen";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +61,11 @@ export default async function BenchmarkPage({
 }: {
   searchParams: Promise<{ round?: string }>;
 }) {
+  const ban = await checkServerBan();
+  if (ban?.banned) {
+    return <BannedScreen telemetry={ban.telemetry} />;
+  }
+
   const round = selectedRound((await searchParams).round);
   const audit = createMalatyaCategoryCRoundAudit(round);
   const officialCount = audit.rows.length;

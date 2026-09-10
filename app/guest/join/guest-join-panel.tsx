@@ -50,8 +50,13 @@ export function GuestJoinPanel({ prefillCode }: { prefillCode: string }) {
         }),
       });
       const parsed = (await response.json().catch(() => ({}))) as JoinResult & {
+        banned?: boolean;
         error?: string;
       };
+      if (parsed.banned) {
+        window.location.reload();
+        return;
+      }
       if (!response.ok) {
         setError(parsed.error || "Unable to join this tournament.");
         return;
@@ -87,7 +92,14 @@ export function GuestJoinPanel({ prefillCode }: { prefillCode: string }) {
           confirm: true,
         }),
       });
-      const parsed = (await response.json().catch(() => ({}))) as { error?: string };
+      const parsed = (await response.json().catch(() => ({}))) as {
+        banned?: boolean;
+        error?: string;
+      };
+      if (parsed.banned) {
+        window.location.reload();
+        return;
+      }
       if (!response.ok) {
         setError(parsed.error || "Unable to withdraw right now.");
         return;

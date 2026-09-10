@@ -36,7 +36,14 @@ export function AuthPanel({ returnTo }: { returnTo: string }) {
           displayName: String(data.get("displayName") || ""),
         }),
       });
-      const result = (await response.json().catch(() => ({}))) as { error?: string };
+      const result = (await response.json().catch(() => ({}))) as {
+        banned?: boolean;
+        error?: string;
+      };
+      if (result.banned) {
+        window.location.reload();
+        return;
+      }
       if (!response.ok) {
         setError(result.error || "Unable to continue.");
         return;

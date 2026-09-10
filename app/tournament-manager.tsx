@@ -103,6 +103,12 @@ type Props = {
   signOutPath: string;
 };
 
+function reloadForBan(data: { banned?: boolean }) {
+  if (!data.banned) return false;
+  window.location.reload();
+  return true;
+}
+
 const emptyPayload: ManagerPayload = {
   serverTime: "1970-01-01T00:00:00.000Z",
   authenticated: false,
@@ -203,7 +209,11 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     try {
       const query = tournamentId ? `?t=${encodeURIComponent(tournamentId)}` : "";
       const response = await fetch(`/api/manager${query}`, { cache: "no-store" });
-      const data = (await response.json()) as ManagerPayload & { error?: string };
+      const data = (await response.json()) as ManagerPayload & {
+        banned?: boolean;
+        error?: string;
+      };
+      if (reloadForBan(data)) return;
       if (!response.ok) throw new Error(data.error || "Unable to load tournament");
       if (latestLoadId.current === loadId) setPayload(data);
     } catch (error) {
@@ -242,9 +252,11 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
         });
         const data = (await response.json()) as {
           error?: string;
+          banned?: boolean;
           tournamentId?: string;
           deletedTournamentId?: string;
         };
+        if (reloadForBan(data)) return false;
         if (!response.ok) throw new Error(data.error || "Request failed");
         if (data.deletedTournamentId) {
           window.history.replaceState({}, "", window.location.pathname);
@@ -408,7 +420,8 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
           result,
         }),
       });
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as { banned?: boolean; error?: string };
+      if (reloadForBan(data)) return;
       if (!response.ok) throw new Error(data.error || "Unable to save result");
     } catch (error) {
       setPayload((current) =>
@@ -543,7 +556,11 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "self_withdraw", tournamentId: tournament.id }),
       });
-      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      const data = (await response.json().catch(() => ({}))) as {
+        banned?: boolean;
+        error?: string;
+      };
+      if (reloadForBan(data)) return;
       if (!response.ok) throw new Error(data.error || "Unable to withdraw");
       toast.success("You withdrew from this tournament");
       await load(tournament.id);
@@ -567,7 +584,11 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
           confirm: true,
         }),
       });
-      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      const data = (await response.json().catch(() => ({}))) as {
+        banned?: boolean;
+        error?: string;
+      };
+      if (reloadForBan(data)) return;
       if (!response.ok) throw new Error(data.error || "Unable to withdraw");
       toast.success("You withdrew from this tournament");
       removeGuestRegistration(tournament.id);
@@ -599,7 +620,12 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "create_moderator_token", targetEmail }),
       });
-      const data = (await response.json()) as { error?: string; moderatorToken?: string };
+      const data = (await response.json()) as {
+        banned?: boolean;
+        error?: string;
+        moderatorToken?: string;
+      };
+      if (reloadForBan(data)) return false;
       if (!response.ok || !data.moderatorToken) {
         throw new Error(data.error || "Unable to create moderator token");
       }
@@ -644,9 +670,11 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
         }),
       });
       const data = (await response.json().catch(() => ({}))) as {
+        banned?: boolean;
         error?: string;
         backup?: unknown;
       };
+      if (reloadForBan(data)) return;
       if (!response.ok || !data.backup) {
         throw new Error(data.error || "Unable to export tournament");
       }
