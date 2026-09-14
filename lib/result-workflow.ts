@@ -53,5 +53,6 @@ export function applyPairingResult(
     tournament: { ...snapshot.tournament, status },
     pairings,
     standings: calculateStandings(snapshot.players, pairings),
+    canManageCheckIn: snapshot.canEdit && status === "between_rounds",
   };
 }

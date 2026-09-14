@@ -477,6 +477,174 @@ test("late entrants join between rounds and latest-round correction preserves ea
   assert.equal(database.prepare("SELECT result FROM pairings WHERE id = ?").get(corrected.id).result, "0-1");
 });
 
+test("round one pairs only checked-in players and can be corrected", async () => {
+  const owner = await account("partial-checkin-owner");
+  const event = await tournament(owner.cookie, "Partial check-in event");
+  const playerIds = [];
+
+  for (const name of [
+    "Present One",
+    "Present Two",
+    "Present Three",
+    "Present Four",
+    "Present Five",
+    "Karma",
+  ]) {
+    const added = await post(manager, {
+      action: "add_player",
+      tournamentId: event.id,
+      name,
+      rating: 1800,
+    }, owner.cookie);
+    assert.equal(added.status, 201, JSON.stringify(added.data));
+  }
+
+  playerIds.push(...database.prepare(
+    "SELECT id FROM players WHERE tournament_id = ? ORDER BY seed",
+  ).all(event.id).map((player) => player.id));
+
+  for (const playerId of playerIds.slice(0, 5)) {
+    assert.equal((await post(manager, {
+      action: "set_player_checked_in",
+      tournamentId: event.id,
+      playerId,
+      checkedIn: true,
+    }, owner.cookie)).status, 200);
+  }
+
+  const generated = await post(manager, {
+    action: "generate_round",
+    tournamentId: event.id,
+  }, owner.cookie);
+  assert.equal(generated.status, 200, JSON.stringify(generated.data));
+
+  const firstAttempt = database.prepare(
+    `SELECT white_player_id AS whitePlayerId, black_player_id AS blackPlayerId
+     FROM pairings WHERE tournament_id = ? AND round_number = 1`,
+  ).all(event.id);
+  assert.equal(firstAttempt.length, 3);
+  assert.deepEqual(
+    new Set(firstAttempt.flatMap((pairing) => [pairing.whitePlayerId, pairing.blackPlayerId]).filter(Boolean)),
+    new Set(playerIds.slice(0, 5)),
+  );
+  const pairingBye = firstAttempt.find((pairing) => pairing.blackPlayerId === null);
+  assert.ok(pairingBye);
+  assert.equal(playerIds.slice(0, 5).includes(pairingBye.whitePlayerId), true);
+  assert.equal(pairingBye.whitePlayerId === playerIds[5], false);
+
+  assert.equal((await post(manager, {
+    action: "delete_round",
+    tournamentId: event.id,
+  }, owner.cookie)).status, 200);
+  assert.equal((await post(manager, {
+    action: "set_player_checked_in",
+    tournamentId: event.id,
+    playerId: playerIds[5],
+    checkedIn: true,
+  }, owner.cookie)).status, 200);
+  assert.equal((await post(manager, {
+    action: "generate_round",
+    tournamentId: event.id,
+  }, owner.cookie)).status, 200);
+
+  const correctedPlayers = database.prepare(
+    `SELECT white_player_id AS whitePlayerId, black_player_id AS blackPlayerId
+     FROM pairings WHERE tournament_id = ? AND round_number = 1`,
+  ).all(event.id).flatMap((pairing) => [pairing.whitePlayerId, pairing.blackPlayerId]).filter(Boolean);
+  assert.deepEqual(new Set(correctedPlayers), new Set(playerIds));
+  assert.equal(database.prepare(
+    `SELECT COUNT(*) AS count FROM pairings
+     WHERE tournament_id = ? AND round_number = 1 AND black_player_id IS NULL`,
+  ).get(event.id).count, 0);
+});
+
+test("players can check in between rounds while unchecked players stay omitted", async () => {
+  const owner = await account("late-checkin-owner");
+  const event = await tournament(owner.cookie, "Late check-in eligibility event");
+
+  for (const name of [
+    "Starter One",
+    "Starter Two",
+    "Starter Three",
+    "Late Arrival",
+    "Still Unchecked",
+  ]) {
+    assert.equal((await post(manager, {
+      action: "add_player",
+      tournamentId: event.id,
+      name,
+      rating: 1700,
+    }, owner.cookie)).status, 201);
+  }
+
+  const starters = database.prepare(
+    "SELECT id FROM players WHERE tournament_id = ? ORDER BY seed",
+  ).all(event.id).map((player) => player.id);
+  for (const playerId of starters.slice(0, 3)) {
+    assert.equal((await post(manager, {
+      action: "set_player_checked_in",
+      tournamentId: event.id,
+      playerId,
+      checkedIn: true,
+    }, owner.cookie)).status, 200);
+  }
+  assert.equal((await post(manager, {
+    action: "generate_round",
+    tournamentId: event.id,
+  }, owner.cookie)).status, 200);
+
+  const activeRoundCheckIn = await post(manager, {
+    action: "set_player_checked_in",
+    tournamentId: event.id,
+    playerId: starters[3],
+    checkedIn: true,
+  }, owner.cookie);
+  assert.equal(activeRoundCheckIn.status, 409);
+
+  for (const pairing of database.prepare(
+    `SELECT id FROM pairings
+     WHERE tournament_id = ? AND round_number = 1 AND black_player_id IS NOT NULL`,
+  ).all(event.id)) {
+    assert.equal((await post(manager, {
+      action: "set_result",
+      tournamentId: event.id,
+      pairingId: pairing.id,
+      result: "1-0",
+    }, owner.cookie)).status, 200);
+  }
+
+  assert.equal((await post(manager, {
+    action: "set_player_checked_in",
+    tournamentId: event.id,
+    playerId: starters[3],
+    checkedIn: true,
+  }, owner.cookie)).status, 200);
+
+  assert.equal((await post(manager, {
+    action: "add_player",
+    tournamentId: event.id,
+    name: "Checked Late Entrant",
+    rating: 1650,
+  }, owner.cookie)).status, 201);
+  const latePlayer = database.prepare(
+    `SELECT id, checked_in AS checkedIn FROM players
+     WHERE tournament_id = ? AND name = 'Checked Late Entrant'`,
+  ).get(event.id);
+  assert.equal(Number(latePlayer.checkedIn), 1);
+
+  assert.equal((await post(manager, {
+    action: "generate_round",
+    tournamentId: event.id,
+  }, owner.cookie)).status, 200);
+  const roundTwoPlayers = database.prepare(
+    `SELECT white_player_id AS whitePlayerId, black_player_id AS blackPlayerId
+     FROM pairings WHERE tournament_id = ? AND round_number = 2`,
+  ).all(event.id).flatMap((pairing) => [pairing.whitePlayerId, pairing.blackPlayerId]).filter(Boolean);
+  assert.equal(roundTwoPlayers.includes(starters[3]), true);
+  assert.equal(roundTwoPlayers.includes(starters[4]), false);
+  assert.equal(roundTwoPlayers.includes(latePlayer.id), true);
+});
+
 test("published Malatya rounds distinguish one-round absences from withdrawals", async () => {
   const { MALATYA_C_ALL_ROUNDS } = await vite.ssrLoadModule(
     "/lib/malatya-category-c-all-round-data.ts",

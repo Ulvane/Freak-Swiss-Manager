@@ -91,11 +91,14 @@ test("2700chess Top 64 creates exactly one unresolved first round", async () => 
       blackName: null,
     })),
     standings: [],
+    canEdit: true,
+    canManageCheckIn: false,
   };
   const firstUpdate = applyPairingResult(snapshot, "pairing-1", "1-0");
   assert.equal(firstUpdate.pairings[0].result, "1-0");
   assert.equal(firstUpdate.standings[0].score, 1);
   assert.equal(firstUpdate.tournament.status, "active");
+  assert.equal(firstUpdate.canManageCheckIn, false);
 
   const completed = firstUpdate.pairings
     .slice(1)
@@ -106,6 +109,7 @@ test("2700chess Top 64 creates exactly one unresolved first round", async () => 
     );
   assert.equal(countPendingResults(completed.pairings), 0);
   assert.equal(completed.tournament.status, "between_rounds");
+  assert.equal(completed.canManageCheckIn, true);
 
   const archivedPairings = [
     ...completed.pairings,

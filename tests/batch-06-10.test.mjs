@@ -190,6 +190,7 @@ test("operational pairing cases cover odd fields, repeat avoidance and skipped-p
   const route = await readFile(`${root}/app/api/manager/route.ts`, "utf8");
   assert.match(route, /activePlayers\.filter\(\(player\) => !statuses\.has\(player\.id\)\)/);
   assert.match(route, /manualByePlayers/);
-  assert.match(route, /withdrawn = 0 AND checked_in = 0/);
+  assert.match(route, /checked_in AS checkedIn/);
+  assert.match(route, /!player\.withdrawn && Boolean\(player\.checkedIn\)/);
   assert.match(route, /sortPairingsForPublication/);
 });

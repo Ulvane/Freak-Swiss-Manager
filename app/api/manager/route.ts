@@ -448,7 +448,9 @@ async function loadSnapshot(
         isDelegated &&
         (controlRole === "moderator" || controlRole === "superadmin"),
     ),
-    canManageCheckIn: canEdit && Number(tournament.currentRound) === 0,
+    canManageCheckIn:
+      canEdit &&
+      (Number(tournament.currentRound) === 0 || tournament.status === "between_rounds"),
     canChangeVisibility: Boolean(
       viewerEmail &&
         (isSuperadmin(viewerEmail) ||
@@ -2247,8 +2249,11 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "set_player_checked_in") {
-      if (Number(tournament.currentRound) > 0) {
-        return Response.json({ error: "Check-in is closed after round one." }, { status: 409 });
+      if (Number(tournament.currentRound) > 0 && tournament.status !== "between_rounds") {
+        return Response.json(
+          { error: "Complete the current round before changing check-in." },
+          { status: 409 },
+        );
       }
       const playerId = cleanText(body.playerId, 80);
       const result = await database
@@ -2276,10 +2281,13 @@ export async function POST(request: Request) {
       const updatePlayer = database
         .prepare(
           `UPDATE players
-           SET withdrawn = ?, checked_in = 0, withdrawn_from_round = ?
+           SET withdrawn = ?,
+               checked_in = CASE WHEN ? = 1 THEN checked_in ELSE 1 END,
+               withdrawn_from_round = ?
            WHERE id = ? AND tournament_id = ?`,
         )
         .bind(
+          body.withdrawn ? 1 : 0,
           body.withdrawn ? 1 : 0,
           body.withdrawn ? Number(tournament.currentRound) + 1 : null,
           playerId,
@@ -2402,27 +2410,11 @@ export async function POST(request: Request) {
           { status: 409 },
         );
       }
-      if (Number(tournament.currentRound) === 0) {
-        const missingCheckIn = await database
-          .prepare(
-            `SELECT COUNT(*) AS count FROM players
-             WHERE tournament_id = ? AND withdrawn = 0 AND checked_in = 0`,
-          )
-          .bind(tournamentId)
-          .first<{ count: number }>();
-        if (Number(missingCheckIn?.count ?? 0) > 0) {
-          return Response.json(
-            { error: `${Number(missingCheckIn?.count)} active player(s) still need check-in.` },
-            { status: 409 },
-          );
-        }
-      }
-
       const roundNumber = Number(tournament.currentRound) + 1;
       const [playerRows, historyRows, statusRows] = await Promise.all([
         database
           .prepare(
-            `SELECT id, name, rating, seed, withdrawn
+            `SELECT id, name, rating, seed, withdrawn, checked_in AS checkedIn
              FROM players WHERE tournament_id = ? ORDER BY seed ASC`,
           )
           .bind(tournamentId)
@@ -2432,6 +2424,7 @@ export async function POST(request: Request) {
             rating: number;
             seed: number;
             withdrawn: number;
+            checkedIn: number;
           }>(),
         database
           .prepare(
@@ -2461,11 +2454,26 @@ export async function POST(request: Request) {
         rating: number;
         seed: number;
         withdrawn: number;
+        checkedIn: number;
       }>;
-      const activePlayers = allPlayers.filter((player) => !player.withdrawn);
+      const activePlayers = allPlayers.filter(
+        (player) => !player.withdrawn && Boolean(player.checkedIn),
+      );
       if (activePlayers.length < 2) {
+        const nonWithdrawnCount = allPlayers.filter((player) => !player.withdrawn).length;
+        let errorMessage: string;
+        if (allPlayers.length < 2) {
+          errorMessage = "Register at least two players before generating a round.";
+        } else if (nonWithdrawnCount < 2) {
+          errorMessage = "At least two non-withdrawn players are required to generate a round.";
+        } else {
+          errorMessage =
+            roundNumber === 1
+              ? "Check in at least two players before generating round 1."
+              : "Check in at least two players before generating a round.";
+        }
         return Response.json(
-          { error: "Add at least two active players before generating a round." },
+          { error: errorMessage },
           { status: 409 },
         );
       }

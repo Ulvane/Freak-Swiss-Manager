@@ -112,7 +112,10 @@ test("withdrawal persists its starting round without deleting historical pairing
     route.indexOf("if (!user || !email)"),
   );
   assert.doesNotMatch(withdrawalBlock, /DELETE FROM pairings/);
-  assert.match(route, /activePlayers = allPlayers\.filter\(\(player\) => !player\.withdrawn\)/);
+  assert.match(
+    route,
+    /activePlayers = allPlayers\.filter\([\s\S]*!player\.withdrawn && Boolean\(player\.checkedIn\)/,
+  );
   assert.match(route, /body\.withdrawn \? Number\(tournament\.currentRound\) \+ 1 : null/);
 });
 

@@ -19,3 +19,16 @@ test("Superadmin sections use site-styled controls with a mobile touch layout", 
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.admin-tabs-list\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);
   assert.match(css, /\.admin-tabs-list \[data-slot="tabs-trigger"\]\s*\{[\s\S]*min-height:\s*48px/);
 });
+
+test("Authenticated users keep a visible sign-out button in the mobile header", async () => {
+  const [manager, css] = await Promise.all([
+    readFile(`${root}/app/tournament-manager.tsx`, "utf8"),
+    readFile(`${root}/app/globals.css`, "utf8"),
+  ]);
+
+  assert.match(manager, /className="text-link topbar-button signout-button"/);
+  assert.match(
+    css,
+    /@media \(max-width: 720px\)[\s\S]*\.topbar-button:not\(\.signout-button\)[\s\S]*\.signout-button\s*\{[\s\S]*display:\s*inline-flex/,
+  );
+});

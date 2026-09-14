@@ -417,14 +417,14 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
     hasResults: hasStandingResults,
     saving: savingResultIds.size > 0,
   }) === "gold";
-  const activePlayerCount = snapshot?.players.filter((player) => !player.withdrawn).length ?? 0;
+  const checkedInPlayerCount =
+    snapshot?.players.filter((player) => !player.withdrawn && player.checkedIn).length ?? 0;
   const uncheckedPlayerCount =
     snapshot?.players.filter((player) => !player.withdrawn && !player.checkedIn).length ?? 0;
   const canGenerate = Boolean(
     snapshot?.canEdit &&
       tournament &&
-      activePlayerCount >= 2 &&
-      (tournament.currentRound > 0 || uncheckedPlayerCount === 0) &&
+      checkedInPlayerCount >= 2 &&
       remainingResults === 0 &&
       savingResultIds.size === 0 &&
       tournament.currentRound < tournament.rounds,
@@ -815,8 +815,10 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                     : payload.viewerGlobalRole.toUpperCase()}
                 </span>
                 <span className="viewer-name">{payload.viewerName}</span>
-                <form action={signOutPath} method="post">
-                  <button className="text-link topbar-button" type="submit">Sign out</button>
+                <form className="topbar-signout-form" action={signOutPath} method="post">
+                  <button className="text-link topbar-button signout-button" type="submit">
+                    Sign out
+                  </button>
                 </form>
               </>
             ) : (
@@ -1060,7 +1062,7 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                 </div>
                 <p>
                   Share this code. Players enter it and register without an
-                  account. Before round one, check in every active player.
+                  account. Round one pairs only the players you check in.
                 </p>
                 <div className="join-strip-actions">
                   {tournament?.currentRound === 0 && (
@@ -1338,6 +1340,28 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                               ? `${savingResultIds.size} sonuç kaydediliyor…`
                               : `Saving ${savingResultIds.size} result${savingResultIds.size === 1 ? "" : "s"}…`}
                           </span>
+                        ) : tournament && checkedInPlayerCount < 2 ? (
+                          <div className="action-hint-group">
+                            <span className="results-remaining is-warning" aria-live="polite">
+                              {isTr
+                                ? "Eşleştirme için en az 2 oyuncuyu yoklayın"
+                                : "Check in at least 2 players to pair"}
+                            </span>
+                            <Button
+                              className="pair-button"
+                              disabled
+                              title={
+                                isTr
+                                  ? "Eşleştirme için en az 2 oyuncuyu yoklayın"
+                                  : "Check in at least 2 players to pair"
+                              }
+                            >
+                              {tournament.currentRound === 0
+                                ? "Generate round 1"
+                                : `Generate round ${tournament.currentRound + 1}`}
+                              <ChevronRight />
+                            </Button>
+                          </div>
                         ) : tournament && tournament.currentRound < tournament.rounds ? (
                           <Button
                             className="pair-button"
@@ -1744,22 +1768,26 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                               <TableCell>
                                 <span
                                   className={`player-state ${
-                                   player.withdrawn
+                                    player.withdrawn
                                       ? "is-withdrawn"
-                                      : player.nextRoundStatus === "skip"
-                                        ? "is-skipping"
-                                        : player.nextRoundStatus === "bye"
-                                          ? "is-bye"
-                                          : "is-active"
+                                      : !player.checkedIn
+                                        ? "is-unchecked"
+                                        : player.nextRoundStatus === "skip"
+                                          ? "is-skipping"
+                                          : player.nextRoundStatus === "bye"
+                                            ? "is-bye"
+                                            : "is-active"
                                   }`}
                                 >
                                   {player.withdrawn
                                     ? "Withdrawn"
-                                    : player.nextRoundStatus === "skip"
-                                      ? `Skips round ${(tournament?.currentRound ?? 0) + 1}`
-                                      : player.nextRoundStatus === "bye"
-                                        ? `Round ${(tournament?.currentRound ?? 0) + 1} · 1-pt bye`
-                                        : "Active"}
+                                    : !player.checkedIn
+                                      ? "Not paired"
+                                      : player.nextRoundStatus === "skip"
+                                        ? `Skips round ${(tournament?.currentRound ?? 0) + 1}`
+                                        : player.nextRoundStatus === "bye"
+                                          ? `Round ${(tournament?.currentRound ?? 0) + 1} · 1-pt bye`
+                                          : "Active"}
                                 </span>
                               </TableCell>
                               <TableCell className="actions-cell">
@@ -1873,20 +1901,24 @@ export function TournamentManager({ signInPath, signOutPath }: Props) {
                               className={`player-state ${
                                 player.withdrawn
                                   ? "is-withdrawn"
-                                  : player.nextRoundStatus === "skip"
-                                    ? "is-skipping"
-                                    : player.nextRoundStatus === "bye"
-                                      ? "is-bye"
-                                      : "is-active"
+                                  : !player.checkedIn
+                                    ? "is-unchecked"
+                                    : player.nextRoundStatus === "skip"
+                                      ? "is-skipping"
+                                      : player.nextRoundStatus === "bye"
+                                        ? "is-bye"
+                                        : "is-active"
                               }`}
                             >
                               {player.withdrawn
                                 ? "Withdrawn"
-                                : player.nextRoundStatus === "skip"
-                                  ? `Skips round ${(tournament?.currentRound ?? 0) + 1}`
-                                  : player.nextRoundStatus === "bye"
-                                    ? `Round ${(tournament?.currentRound ?? 0) + 1} · 1-pt bye`
-                                    : "Active"}
+                                : !player.checkedIn
+                                  ? "Not paired"
+                                  : player.nextRoundStatus === "skip"
+                                    ? `Skips round ${(tournament?.currentRound ?? 0) + 1}`
+                                    : player.nextRoundStatus === "bye"
+                                      ? `Round ${(tournament?.currentRound ?? 0) + 1} · 1-pt bye`
+                                      : "Active"}
                             </span>
                           </header>
 
@@ -2139,10 +2171,16 @@ function PlayerManagementDialog({
         <div className="player-management-summary">
           <span>Seed #{player.seed}</span>
           <span>{player.rating ? `${player.rating} rating` : "Unrated"}</span>
-          <span>{player.withdrawn ? "Withdrawn" : "Tournament active"}</span>
+          <span>
+            {player.withdrawn
+              ? "Withdrawn"
+              : !player.checkedIn
+                ? "Not paired"
+                : "Tournament active"}
+          </span>
         </div>
 
-        {hasNextRound && !player.withdrawn && (
+        {hasNextRound && !player.withdrawn && player.checkedIn && (
           <div className="player-management-options">
             <p>NEXT ROUND · {String(nextRound).padStart(2, "0")}</p>
             <Button
@@ -2166,6 +2204,15 @@ function PlayerManagementDialog({
             >
               <Trophy /> Award 1-point bye
             </Button>
+          </div>
+        )}
+
+        {hasNextRound && !player.withdrawn && !player.checkedIn && (
+          <div className="player-management-options">
+            <p>NEXT ROUND · {String(nextRound).padStart(2, "0")}</p>
+            <p className="field-hint">
+              This player is not checked in and will not be paired in the next round.
+            </p>
           </div>
         )}
 
@@ -2278,11 +2325,16 @@ function PairingsTable({
   );
 
   if (pairings.length === 0) {
+    const hasEnoughRegistered = standings.length >= 2;
     return (
       <div className="empty-table">
         <Trophy />
         <h3>No round paired yet</h3>
-        <p>Register at least two players, then generate the first round.</p>
+        <p>
+          {hasEnoughRegistered
+            ? "Check in at least two players, then generate the first round."
+            : "Register and check in at least two players, then generate the first round."}
+        </p>
       </div>
     );
   }

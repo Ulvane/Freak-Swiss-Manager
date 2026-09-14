@@ -413,6 +413,10 @@ a {
   cursor: pointer;
 }
 
+.topbar-signout-form {
+  margin: 0;
+}
+
 .archive-menu-button {
   display: inline-flex;
   min-width: 36px;
@@ -1410,6 +1414,13 @@ a {
   color: #263f68;
 }
 
+.action-hint-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .color-chip {
   display: inline-block;
   width: 12px;
@@ -1965,6 +1976,11 @@ a {
 .player-state.is-bye {
   border-color: #7888c8;
   color: #293a83;
+}
+
+.player-state.is-unchecked {
+  border-color: var(--line);
+  color: var(--quiet);
 }
 
 .roster-pairing-bye {
@@ -3579,11 +3595,22 @@ a {
     margin-left: auto;
   }
 
-  .topbar-button,
+  .topbar-button:not(.signout-button),
   .beta-tag,
   .viewer-name,
   .audit-link {
     display: none !important;
+  }
+
+  .signout-button {
+    display: inline-flex;
+    min-height: 32px;
+    align-items: center;
+    padding: 5px 9px;
+    border: 1px solid var(--ink);
+    font-size: 0.68rem;
+    font-weight: 800;
+    white-space: nowrap;
   }
 
   .archive-menu-button {
